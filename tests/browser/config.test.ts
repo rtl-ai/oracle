@@ -25,6 +25,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.manualLogin).toBe(isWindows);
     expect(resolved.profileLockTimeoutMs).toBe(300_000);
     expect(resolved.maxConcurrentTabs).toBe(3);
+    expect(resolved.agentMode).toBe("current");
     expect(resolved.researchMode).toBe("off");
     expect(resolved.archiveConversations).toBe("auto");
   });
@@ -42,6 +43,7 @@ describe("resolveBrowserConfig", () => {
       browserTabRef: "current",
       debug: true,
       maxConcurrentTabs: 5,
+      agentMode: "on",
       researchMode: "deep",
       archiveConversations: "never",
     });
@@ -56,6 +58,7 @@ describe("resolveBrowserConfig", () => {
     expect(resolved.browserTabRef).toBe("current");
     expect(resolved.debug).toBe(true);
     expect(resolved.maxConcurrentTabs).toBe(5);
+    expect(resolved.agentMode).toBe("on");
     expect(resolved.researchMode).toBe("deep");
     expect(resolved.archiveConversations).toBe("never");
   });

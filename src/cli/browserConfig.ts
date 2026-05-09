@@ -12,6 +12,7 @@ import {
 } from "../browserMode.js";
 import { normalizeBrowserModelStrategy } from "../browser/modelStrategy.js";
 import type {
+  BrowserAgentMode,
   BrowserArchiveMode,
   BrowserModelStrategy,
   BrowserResearchMode,
@@ -79,6 +80,7 @@ export interface BrowserFlagOptions {
   browserArchive?: BrowserArchiveMode;
   browserModelLabel?: string;
   browserModelStrategy?: BrowserModelStrategy;
+  browserAgentMode?: BrowserAgentMode;
   browserAllowCookieErrors?: boolean;
   remoteChrome?: string;
   browserPort?: number;
@@ -224,6 +226,7 @@ export async function buildBrowserConfig(
     hideWindow: options.browserHideWindow ? true : undefined,
     desiredModel,
     modelStrategy,
+    agentMode: options.browserAgentMode,
     debug: options.verbose ? true : undefined,
     // Allow cookie failures by default so runs can continue without Chrome/Keychain secrets.
     allowCookieErrors: options.browserAllowCookieErrors ?? true,

@@ -55,6 +55,7 @@ export const DEFAULT_BROWSER_CONFIG: ResolvedBrowserConfig = {
   hideWindow: false,
   desiredModel: DEFAULT_MODEL_TARGET,
   modelStrategy: DEFAULT_MODEL_STRATEGY,
+  agentMode: "current",
   debug: false,
   allowCookieErrors: false,
   remoteChrome: null,
@@ -106,6 +107,7 @@ export function resolveBrowserConfig(
     process.env.ORACLE_BROWSER_PROFILE_DIR,
   );
   const researchMode = normalizeResearchMode(config?.researchMode);
+  const agentMode = normalizeAgentMode(config?.agentMode);
   const archiveConversations = normalizeArchiveMode(config?.archiveConversations);
   const defaultTimeoutMs =
     researchMode === "deep" ? DEEP_RESEARCH_DEFAULT_TIMEOUT_MS : DEFAULT_BROWSER_CONFIG.timeoutMs;
@@ -142,6 +144,7 @@ export function resolveBrowserConfig(
     hideWindow: config?.hideWindow ?? DEFAULT_BROWSER_CONFIG.hideWindow,
     desiredModel,
     modelStrategy,
+    agentMode,
     chromeProfile: config?.chromeProfile ?? DEFAULT_BROWSER_CONFIG.chromeProfile,
     chromePath: config?.chromePath ?? DEFAULT_BROWSER_CONFIG.chromePath,
     chromeCookiePath: config?.chromeCookiePath ?? DEFAULT_BROWSER_CONFIG.chromeCookiePath,
@@ -166,6 +169,10 @@ export function resolveBrowserConfig(
 
 function normalizeResearchMode(value: unknown): "off" | "deep" {
   return value === "deep" ? "deep" : "off";
+}
+
+function normalizeAgentMode(value: unknown): "on" | "off" | "current" {
+  return value === "on" || value === "off" ? value : "current";
 }
 
 function normalizeArchiveMode(value: unknown): "auto" | "always" | "never" {

@@ -36,6 +36,14 @@ describe("buildBrowserConfig", () => {
     expect(config.modelStrategy).toBe("current");
   });
 
+  test("sets ChatGPT Agent mode when provided", async () => {
+    const config = await buildBrowserConfig({
+      model: "gpt-5.5-pro",
+      browserAgentMode: "on",
+    });
+    expect(config.agentMode).toBe("on");
+  });
+
   test("enables Deep Research browser mode when requested", async () => {
     const config = await buildBrowserConfig({
       model: "gpt-5.4-pro",

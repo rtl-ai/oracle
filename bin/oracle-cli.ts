@@ -145,10 +145,12 @@ interface CliOptions extends OptionValues {
   browserKeepBrowser?: boolean;
   browserTab?: string;
   browserModelStrategy?: "select" | "current" | "ignore";
+  browserAgentMode?: "on" | "off" | "current";
   browserManualLogin?: boolean;
   browserManualLoginProfileDir?: string;
   browserThinkingTime?: "light" | "standard" | "extended" | "heavy";
   browserResearch?: "off" | "deep";
+  browserArchive?: "auto" | "always" | "never";
   browserFollowUp?: string[];
   browserAllowCookieErrors?: boolean;
   browserAttachments?: string;
@@ -612,6 +614,12 @@ program
       "--browser-model-strategy <mode>",
       "ChatGPT model picker strategy: select (default) switches to the requested model, current keeps the active model, ignore skips the picker entirely.",
     ).choices(["select", "current", "ignore"]),
+  )
+  .addOption(
+    new Option(
+      "--browser-agent-mode <mode>",
+      "ChatGPT Agent mode: on enables it, off disables it, current leaves the current UI state unchanged.",
+    ).choices(["on", "off", "current"]),
   )
   .addOption(
     new Option(
