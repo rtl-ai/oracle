@@ -4,6 +4,7 @@ import path from "node:path";
 export type GeminiWebModelId =
   | "gemini-3-pro"
   | "gemini-3-pro-deep-think"
+  | "gemini-3-pro-deep-research"
   | "gemini-2.5-pro"
   | "gemini-2.5-flash";
 
@@ -40,6 +41,7 @@ const MODEL_HEADER_NAME = "x-goog-ext-525001261-jspb";
 const MODEL_HEADERS: Record<GeminiWebModelId, string> = {
   "gemini-3-pro": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4]]',
   "gemini-3-pro-deep-think": '[1,null,null,null,"e6fa609c3fa255c0",null,null,0,[4],null,null,3]',
+  "gemini-3-pro-deep-research": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4]]',
   "gemini-2.5-pro": '[1,null,null,null,"4af6c7f5da75d65d",null,null,0,[4]]',
   "gemini-2.5-flash": '[1,null,null,null,"9ec249fc9ad08861",null,null,0,[4]]',
 };

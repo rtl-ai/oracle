@@ -191,9 +191,22 @@ export function parseDurationOption(value: string | undefined, label: string): n
   return parsed;
 }
 
+function isGeminiDeepResearchAlias(normalized: string): boolean {
+  return (
+    (normalized.includes("gemini") &&
+      normalized.includes("deep") &&
+      normalized.includes("research")) ||
+    normalized.includes("deep-research") ||
+    normalized.includes("deep_research") ||
+    normalized.includes("deepresearch")
+  );
+}
+
 function isGeminiDeepThinkAlias(normalized: string): boolean {
   return (
-    (normalized.includes("gemini") && normalized.includes("deep")) ||
+    (normalized.includes("gemini") &&
+      normalized.includes("deep") &&
+      !normalized.includes("research")) ||
     normalized.includes("deep-think") ||
     normalized.includes("deep_think") ||
     normalized.includes("deepthink")
@@ -255,6 +268,11 @@ export function resolveApiModel(modelValue: string): ModelName {
     }
     return "gpt-5.1-codex";
   }
+  if (isGeminiDeepResearchAlias(normalized)) {
+    throw new InvalidArgumentError(
+      "Gemini Deep Research is browser-only today. Use --engine browser --model gemini-3-deep-research.",
+    );
+  }
   if (isGeminiDeepThinkAlias(normalized)) {
     throw new InvalidArgumentError(
       "Gemini Deep Think is browser-only today. Use --engine browser --model gemini-3-deep-think.",
@@ -295,6 +313,9 @@ export function inferModelFromLabel(modelValue: string): ModelName {
   }
   if (normalized.includes("codex")) {
     return "gpt-5.1-codex";
+  }
+  if (isGeminiDeepResearchAlias(normalized)) {
+    return "gemini-3-pro-deep-research" as ModelName;
   }
   if (isGeminiDeepThinkAlias(normalized)) {
     return "gemini-3-pro-deep-think" as ModelName;

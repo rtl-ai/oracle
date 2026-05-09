@@ -18,7 +18,7 @@ export function selectGeminiExecutionMode(
   input: GeminiExecutionModeInput,
 ): GeminiExecutionModeSelection {
   const reasons: string[] = [];
-  if (input.model !== "gemini-3-pro-deep-think") {
+  if (input.model !== "gemini-3-pro-deep-think" && input.model !== "gemini-3-pro-deep-research") {
     return { mode: "http", reasons: ["model"] };
   }
 

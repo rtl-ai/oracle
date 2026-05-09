@@ -208,6 +208,15 @@ describe("resolveApiModel", () => {
     );
   });
 
+  test("rejects Gemini deep-research aliases in API mode", () => {
+    expect(() => resolveApiModel("gemini-3-deep-research")).toThrow(
+      "Gemini Deep Research is browser-only today",
+    );
+    expect(() => resolveApiModel("Gemini Deep Research")).toThrow(
+      "Gemini Deep Research is browser-only today",
+    );
+  });
+
   test("passes through unknown names (OpenRouter/custom)", () => {
     expect(resolveApiModel("instant")).toBe("instant");
     expect(resolveApiModel("openai/gpt-5.4")).toBe("openai/gpt-5.4");
@@ -262,6 +271,11 @@ describe("inferModelFromLabel", () => {
 
   test("preserves Gemini 3.1 labels", () => {
     expect(inferModelFromLabel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
+  });
+
+  test("infers Gemini browser-only deep research labels", () => {
+    expect(inferModelFromLabel("Gemini Deep Research")).toBe("gemini-3-pro-deep-research");
+    expect(inferModelFromLabel("gemini-3-deep-research")).toBe("gemini-3-pro-deep-research");
   });
 
   test("infers Codex labels", () => {

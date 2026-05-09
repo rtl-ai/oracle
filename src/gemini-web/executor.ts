@@ -7,9 +7,13 @@ import type {
 } from "../browser/types.js";
 import { getCookies } from "@steipete/sweet-cookie";
 import { runProviderDomFlow } from "../browser/providerDomFlow.js";
+import type { ProviderDomAdapter } from "../browser/providerDomFlow.js";
 import { delay } from "../browser/utils.js";
 import { runGeminiWebWithFallback, saveFirstGeminiImageFromOutput } from "./client.js";
-import { geminiDeepThinkDomProvider } from "../browser/providers/index.js";
+import {
+  geminiDeepResearchDomProvider,
+  geminiDeepThinkDomProvider,
+} from "../browser/providers/index.js";
 import type { GeminiWebModelId } from "./client.js";
 import type { GeminiWebOptions, GeminiWebResponse } from "./types.js";
 import { openGeminiBrowserSession } from "./browserSessionManager.js";
@@ -71,6 +75,12 @@ function resolveGeminiWebModel(
     case "gemini-3-pro-deep-think":
     case "gemini-3-pro-deepthink":
       return "gemini-3-pro-deep-think";
+    case "gemini-3-deep-research":
+    case "gemini-3-pro-deep-research":
+    case "gemini-3-pro-deepresearch":
+    case "gemini-deep-research":
+    case "deep-research":
+      return "gemini-3-pro-deep-research";
     case "gemini-2.5-pro":
       return "gemini-2.5-pro";
     case "gemini-2.5-flash":
@@ -192,15 +202,17 @@ async function loadGeminiCookiesFromCDP(
   }
 }
 
-async function runGeminiDeepThinkViaBrowser(
+async function runGeminiDomFlowViaBrowser(
   prompt: string,
   browserConfig: BrowserRunOptions["config"],
+  adapter: ProviderDomAdapter,
+  label: string,
   log?: BrowserLogger,
-): Promise<{ text: string; thoughts: string | null }> {
+): Promise<{ text: string; html?: string; thoughts: string | null }> {
   const session = await openGeminiBrowserSession({
     browserConfig,
     keepBrowserDefault: true,
-    purpose: "Gemini Deep Think",
+    purpose: label,
     log,
   });
   try {
@@ -211,10 +223,10 @@ async function runGeminiDeepThinkViaBrowser(
       typeof Runtime.enable !== "function" ||
       typeof Runtime.evaluate !== "function"
     ) {
-      throw new Error("Chrome Runtime domain unavailable for Gemini Deep Think DOM automation.");
+      throw new Error(`Chrome Runtime domain unavailable for ${label} DOM automation.`);
     }
     if (!Page || typeof Page.enable !== "function" || typeof Page.navigate !== "function") {
-      throw new Error("Chrome Page domain unavailable for Gemini Deep Think DOM automation.");
+      throw new Error(`Chrome Page domain unavailable for ${label} DOM automation.`);
     }
     await Runtime.enable();
     await Page.enable();
@@ -228,7 +240,7 @@ async function runGeminiDeepThinkViaBrowser(
     await Page.navigate({ url: "https://gemini.google.com/app" });
     await delay(3_000);
 
-    const domResult = await runProviderDomFlow(geminiDeepThinkDomProvider, {
+    const domResult = await runProviderDomFlow(adapter, {
       prompt,
       evaluate,
       delay,
@@ -239,7 +251,7 @@ async function runGeminiDeepThinkViaBrowser(
       },
     });
 
-    log?.(`[gemini-web] Deep Think response received (${domResult.text.length} chars).`);
+    log?.(`[gemini-web] ${label} response received (${domResult.text.length} chars).`);
     return domResult;
   } finally {
     await session.close();
@@ -398,17 +410,27 @@ export function createGeminiWebExecutor(
     const domClient: IGeminiExecutionClient = {
       mode: "dom",
       execute: async () => {
-        log?.("[gemini-web] Using browser DOM automation for Deep Think.");
-        const browserResult = await runGeminiDeepThinkViaBrowser(prompt, runOptions.config, log);
+        const isDeepResearch = model === "gemini-3-pro-deep-research";
+        const label = isDeepResearch ? "Gemini Deep Research" : "Gemini Deep Think";
+        const adapter = isDeepResearch ? geminiDeepResearchDomProvider : geminiDeepThinkDomProvider;
+        log?.(`[gemini-web] Using browser DOM automation for ${label}.`);
+        const browserResult = await runGeminiDomFlowViaBrowser(
+          prompt,
+          runOptions.config,
+          adapter,
+          label,
+          log,
+        );
         const tookMs = Date.now() - startTime;
         let answerMarkdown = browserResult.text;
-        if (geminiOptions.showThoughts && browserResult.thoughts) {
+        if (!isDeepResearch && geminiOptions.showThoughts && browserResult.thoughts) {
           answerMarkdown = `## Thinking\n\n${browserResult.thoughts}\n\n## Response\n\n${browserResult.text}`;
         }
         log?.(`[gemini-web] Completed in ${tookMs}ms`);
         return {
           answerText: browserResult.text,
           answerMarkdown,
+          answerHtml: browserResult.html,
           tookMs,
           answerTokens: estimateTokenCount(browserResult.text),
           answerChars: browserResult.text.length,
@@ -561,6 +583,11 @@ export function createGeminiWebExecutor(
     if (model === "gemini-3-pro-deep-think" && modeSelection.mode === "http") {
       log?.(
         `[gemini-web] Deep Think DOM path skipped (${modeSelection.reasons.join(", ")} requested); using HTTP/header fallback path.`,
+      );
+    }
+    if (model === "gemini-3-pro-deep-research" && modeSelection.mode === "http") {
+      throw new Error(
+        `Gemini Deep Research is browser-DOM only and cannot run with ${modeSelection.reasons.join(", ")}.`,
       );
     }
 

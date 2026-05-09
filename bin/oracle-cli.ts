@@ -319,7 +319,7 @@ program
   .option("-s, --slug <words>", "Custom session slug (3-5 words).")
   .option(
     "-m, --model <model>",
-    'Model to target (gpt-5.5-pro default). Also gpt-5.5, gpt-5.4-pro, gpt-5.4, gpt-5.1-pro, gpt-5-pro, gpt-5.1, gpt-5.1-codex API-only, gpt-5.2, gpt-5.2-instant, gpt-5.2-pro, gemini-3.1-pro API-only, gemini-3-pro, claude-4.6-sonnet, claude-4.1-opus, or ChatGPT labels like "5.5 Pro" / "5.2 Thinking" for browser runs).',
+    'Model to target (gpt-5.5-pro default). Also gpt-5.5, gpt-5.4-pro, gpt-5.4, gpt-5.1-pro, gpt-5-pro, gpt-5.1, gpt-5.1-codex API-only, gpt-5.2, gpt-5.2-instant, gpt-5.2-pro, gemini-3.1-pro API-only, gemini-3-pro, gemini-3-deep-think, gemini-3-deep-research, claude-4.6-sonnet, claude-4.1-opus, or ChatGPT labels like "5.5 Pro" / "5.2 Thinking" for browser runs).',
     normalizeModelOption,
   )
   .addOption(
@@ -1575,7 +1575,8 @@ async function runRootCommand(options: CliOptions): Promise<void> {
     throw new Error("--remote-host does not support --models yet. Use API engine locally instead.");
   }
   const resolvedModel: ModelName =
-    normalizedMultiModels[0] ?? (isGemini ? resolveApiModel(cliModelArg) : resolvedModelCandidate);
+    normalizedMultiModels[0] ??
+    (isGemini && engine !== "browser" ? resolveApiModel(cliModelArg) : resolvedModelCandidate);
   const includesGeminiApiOnly = (
     normalizedMultiModels.length > 0 ? normalizedMultiModels : [resolvedModel]
   ).some((model) => model === "gemini-3.1-pro");
