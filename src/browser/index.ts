@@ -31,6 +31,7 @@ import {
   ensurePromptReady,
   installJavaScriptDialogAutoDismissal,
   ensureModelSelection,
+  ensureAgentMode,
   clearPromptComposer,
   waitForAssistantResponse,
   captureAssistantMarkdown,
@@ -1036,6 +1037,32 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       logger(
         `Prompt textarea ready (after Deep Research activation, ${promptText.length.toLocaleString()} chars queued)`,
       );
+    }
+    const agentMode = config.agentMode ?? "current";
+    if (agentMode !== "current" && !deepResearch) {
+      const agentResult = await raceWithDisconnect(
+        withRetries(() => ensureAgentMode(Runtime, Input, agentMode, logger), {
+          retries: 2,
+          delayMs: 500,
+          onRetry: (attempt, error) => {
+            if (options.verbose) {
+              logger(
+                `[retry] Agent mode (${agentMode}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
+              );
+            }
+          },
+        }),
+      );
+      if (agentResult?.connectorDismissed) {
+        await delay(1_000);
+        await raceWithDisconnect(clearPromptComposer(Runtime, logger)).catch(() => undefined);
+      }
+      await raceWithDisconnect(ensurePromptReady(Runtime, config.inputTimeoutMs, logger));
+      logger(
+        `Prompt textarea ready (after Agent mode ${agentMode}, ${promptText.length.toLocaleString()} chars queued)`,
+      );
+    } else if (agentMode !== "current" && deepResearch) {
+      logger("Agent mode: skipped because Deep Research owns the ChatGPT tools menu");
     }
     const profileLockTimeoutMs = manualLogin ? (config.profileLockTimeoutMs ?? 0) : 0;
     let profileLock: ProfileRunLock | null = null;
@@ -2396,6 +2423,33 @@ async function runRemoteBrowserMode(
       logger(
         `Prompt textarea ready (after Deep Research activation, ${promptText.length.toLocaleString()} chars queued)`,
       );
+    }
+    const agentMode = config.agentMode ?? "current";
+    if (agentMode !== "current" && !deepResearch) {
+      const agentResult = await withRetries(
+        () => ensureAgentMode(Runtime, Input, agentMode, logger),
+        {
+          retries: 2,
+          delayMs: 500,
+          onRetry: (attempt, error) => {
+            if (options.verbose) {
+              logger(
+                `[retry] Agent mode (${agentMode}) attempt ${attempt + 1}: ${error instanceof Error ? error.message : error}`,
+              );
+            }
+          },
+        },
+      );
+      if (agentResult?.connectorDismissed) {
+        await delay(1_000);
+        await clearPromptComposer(Runtime, logger).catch(() => undefined);
+      }
+      await ensurePromptReady(Runtime, config.inputTimeoutMs, logger);
+      logger(
+        `Prompt textarea ready (after Agent mode ${agentMode}, ${promptText.length.toLocaleString()} chars queued)`,
+      );
+    } else if (agentMode !== "current" && deepResearch) {
+      logger("Agent mode: skipped because Deep Research owns the ChatGPT tools menu");
     }
 
     const submitOnce = async (prompt: string, submissionAttachments: BrowserAttachment[]) => {

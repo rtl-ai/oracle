@@ -28,7 +28,7 @@ import { applyConsultPreset } from "../consultPresets.js";
 import { loadUserConfig, type UserConfig } from "../../config.js";
 import { resolveNotificationSettings } from "../../cli/notifier.js";
 import { mapModelToBrowserLabel, resolveBrowserModelLabel } from "../../cli/browserConfig.js";
-import type { BrowserModelStrategy } from "../../browser/types.js";
+import type { BrowserAgentMode, BrowserModelStrategy } from "../../browser/types.js";
 
 // Use raw shapes so the MCP SDK (with its bundled Zod) wraps them and emits valid JSON Schema.
 const consultInputShape = {
@@ -86,6 +86,12 @@ const consultInputShape = {
     .optional()
     .describe(
       "Browser-only: model picker strategy. Mirrors the CLI --browser-model-strategy flag.",
+    ),
+  browserAgentMode: z
+    .enum(["on", "off", "current"])
+    .optional()
+    .describe(
+      "Browser-only: ChatGPT Agent mode. Use on/off to force the UI state; current leaves it unchanged.",
     ),
   browserResearchMode: z
     .enum(["deep"])
@@ -164,6 +170,7 @@ const consultDryRunResolvedShape = z.object({
       desiredModel: z.string().nullable().optional(),
       thinkingTime: z.string().nullable().optional(),
       modelStrategy: z.string().nullable().optional(),
+      agentMode: z.string().nullable().optional(),
       researchMode: z.string().nullable().optional(),
       attachments: z.string().optional(),
       bundleFiles: z.boolean().optional(),
@@ -229,6 +236,7 @@ export function buildConsultBrowserConfig({
   browserModelLabel,
   browserThinkingTime,
   browserModelStrategy,
+  browserAgentMode,
   browserResearchMode,
   browserArchive,
   browserKeepBrowser,
@@ -240,6 +248,7 @@ export function buildConsultBrowserConfig({
   browserModelLabel?: string;
   browserThinkingTime?: "light" | "standard" | "extended" | "heavy";
   browserModelStrategy?: BrowserModelStrategy;
+  browserAgentMode?: BrowserAgentMode;
   browserResearchMode?: "deep";
   browserArchive?: "auto" | "always" | "never";
   browserKeepBrowser?: boolean;
@@ -269,6 +278,7 @@ export function buildConsultBrowserConfig({
       : null,
     thinkingTime: browserThinkingTime ?? configuredBrowser.thinkingTime,
     modelStrategy: browserModelStrategy ?? configuredBrowser.modelStrategy,
+    agentMode: browserAgentMode ?? configuredBrowser.agentMode,
     researchMode: browserResearchMode ?? configuredBrowser.researchMode,
     archiveConversations: browserArchive ?? configuredBrowser.archiveConversations,
     desiredModel: desiredModelLabel || mapModelToBrowserLabel(runModel),
@@ -326,6 +336,7 @@ export function buildConsultDryRunResolved({
             desiredModel,
             thinkingTime,
             modelStrategy: browserConfig?.modelStrategy ?? null,
+            agentMode: browserConfig?.agentMode ?? null,
             researchMode: browserConfig?.researchMode ?? null,
             attachments: runOptions.browserAttachments,
             bundleFiles: runOptions.browserBundleFiles,
@@ -353,6 +364,7 @@ export function formatConsultDryRunResolved(details: ConsultDryRunResolved): str
     lines.push(`  browser desired model: ${details.browser.desiredModel ?? "(default)"}`);
     lines.push(`  browser thinking time: ${details.browser.thinkingTime ?? "(default)"}`);
     lines.push(`  browser model strategy: ${details.browser.modelStrategy ?? "(default)"}`);
+    lines.push(`  browser agent mode: ${details.browser.agentMode ?? "current"}`);
     lines.push(`  browser research mode: ${details.browser.researchMode ?? "off"}`);
     lines.push(`  browser attachments: ${details.browser.attachments ?? "auto"}`);
     lines.push(`  browser bundle files: ${details.browser.bundleFiles ? "yes" : "no"}`);
@@ -406,6 +418,7 @@ export function registerConsultTool(server: McpServer): void {
         browserBundleFiles,
         browserThinkingTime,
         browserModelStrategy,
+        browserAgentMode,
         browserResearchMode,
         browserArchive,
         browserFollowUps,
@@ -450,6 +463,7 @@ export function registerConsultTool(server: McpServer): void {
           browserModelLabel,
           browserThinkingTime,
           browserModelStrategy,
+          browserAgentMode,
           browserResearchMode,
           browserArchive,
           browserKeepBrowser,

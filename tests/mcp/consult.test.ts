@@ -88,6 +88,7 @@ describe("summarizeModelRunsForConsult", () => {
           manualLogin: true,
           manualLoginProfileDir: "/tmp/oracle-profile",
           thinkingTime: "extended",
+          agentMode: "on",
           researchMode: "deep",
           archiveConversations: "never",
         },
@@ -105,6 +106,7 @@ describe("summarizeModelRunsForConsult", () => {
       manualLogin: true,
       manualLoginProfileDir: "/tmp/oracle-profile",
       thinkingTime: "extended",
+      agentMode: "on",
       researchMode: "deep",
       archiveConversations: "never",
       desiredModel: "GPT-5.2",
@@ -131,6 +133,7 @@ describe("summarizeModelRunsForConsult", () => {
       browserKeepBrowser: true,
       browserThinkingTime: "heavy",
       browserModelStrategy: "current",
+      browserAgentMode: "off",
       browserResearchMode: "deep",
       browserArchive: "always",
     });
@@ -141,6 +144,7 @@ describe("summarizeModelRunsForConsult", () => {
       manualLoginProfileDir: "/tmp/env-profile",
       thinkingTime: "heavy",
       modelStrategy: "current",
+      agentMode: "off",
       researchMode: "deep",
       archiveConversations: "always",
       desiredModel: "Claude Sonnet",
@@ -163,6 +167,7 @@ describe("summarizeModelRunsForConsult", () => {
         desiredModel: "GPT-5.5 Pro",
         thinkingTime: "extended",
         modelStrategy: "select",
+        agentMode: "on",
         researchMode: "off",
         keepBrowser: false,
         manualLogin: true,
@@ -179,6 +184,7 @@ describe("summarizeModelRunsForConsult", () => {
       browser: {
         desiredModel: "GPT-5.5 Pro",
         thinkingTime: "extended",
+        agentMode: "on",
         attachments: "always",
         bundleFiles: true,
         profileDir: "/tmp/oracle-profile",
@@ -188,6 +194,7 @@ describe("summarizeModelRunsForConsult", () => {
     expect(formatConsultDryRunResolved(resolved).join("\n")).toContain(
       "browser thinking time: extended",
     );
+    expect(formatConsultDryRunResolved(resolved).join("\n")).toContain("browser agent mode: on");
   });
 
   test("returns resolved dry-run details from the registered MCP consult tool", async () => {
@@ -211,6 +218,7 @@ describe("summarizeModelRunsForConsult", () => {
       files: [],
       browserThinkingTime: "extended",
       browserModelStrategy: "select",
+      browserAgentMode: "on",
     })) as {
       content: Array<{ type: "text"; text: string }>;
       structuredContent: {
@@ -230,6 +238,7 @@ describe("summarizeModelRunsForConsult", () => {
           desiredModel: "GPT-5.5 Pro",
           thinkingTime: "extended",
           modelStrategy: "select",
+          agentMode: "on",
         }),
       },
     });

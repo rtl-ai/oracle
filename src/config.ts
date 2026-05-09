@@ -3,6 +3,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import { getOracleHomeDir } from "./oracleHome.js";
 import type {
+  BrowserAgentMode,
   BrowserArchiveMode,
   BrowserModelStrategy,
   BrowserResearchMode,
@@ -54,6 +55,8 @@ export interface BrowserConfigDefaults {
   hideWindow?: boolean;
   keepBrowser?: boolean;
   modelStrategy?: BrowserModelStrategy;
+  /** ChatGPT Agent mode: on | off | current. */
+  agentMode?: BrowserAgentMode;
   /** Thinking time intensity (ChatGPT Thinking/Pro models): 'light', 'standard', 'extended', 'heavy' */
   thinkingTime?: ThinkingTimeLevel;
   /** Browser-only research mode. "deep" activates ChatGPT Deep Research. */

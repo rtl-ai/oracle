@@ -14,6 +14,7 @@ export const consultInputSchema = z.object({
   browserBundleFiles: z.boolean().optional(),
   browserThinkingTime: z.enum(["light", "standard", "extended", "heavy"]).optional(),
   browserModelStrategy: z.enum(["select", "current", "ignore"]).optional(),
+  browserAgentMode: z.enum(["on", "off", "current"]).optional(),
   browserResearchMode: z.enum(["deep"]).optional(),
   browserArchive: z.enum(["auto", "always", "never"]).optional(),
   browserFollowUps: z.array(z.string()).optional(),
