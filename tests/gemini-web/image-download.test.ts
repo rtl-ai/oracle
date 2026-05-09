@@ -43,7 +43,7 @@ describe("gemini-web image download", () => {
       images: [
         {
           kind: "generated" as const,
-          url: "https://lh3.googleusercontent.com/gg-dl/somewhere",
+          url: "https://lh3.googleusercontent.com/gg-dl/somewhere/",
           title: "[Generated Image]",
           alt: "",
         },
@@ -53,6 +53,7 @@ describe("gemini-web image download", () => {
     const result = await saveFirstGeminiImageFromOutput(output, { a: "b" }, outputPath);
     expect(result.saved).toBe(true);
     expect(calls.length).toBe(2);
+    expect(calls[0]?.url).toBe("https://lh3.googleusercontent.com/gg-dl/somewhere=s2048");
     expect(calls[1]?.cookie).toContain("a=b");
     expect(new Uint8Array(await readFile(outputPath))).toEqual(new Uint8Array([1, 2, 3]));
   });

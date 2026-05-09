@@ -318,6 +318,34 @@ describe("gemini-web executor", () => {
     );
   });
 
+  it("maps Gemini 3.1 Pro browser label to the Gemini web model", async () => {
+    const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
+    const exec = createGeminiWebExecutor({});
+    await exec({
+      prompt: "hello",
+      attachments: [],
+      config: { desiredModel: "Gemini 3.1 Pro", chromeProfile: "Default" },
+      log: () => {},
+    });
+    expect(runGeminiWebWithFallback).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemini-3.1-pro" }),
+    );
+  });
+
+  it("maps Nano Banana Pro browser alias to the Gemini Pro web image path", async () => {
+    const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
+    const exec = createGeminiWebExecutor({});
+    await exec({
+      prompt: "hello",
+      attachments: [],
+      config: { desiredModel: "nano-banana-pro", chromeProfile: "Default" },
+      log: () => {},
+    });
+    expect(runGeminiWebWithFallback).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemini-3.1-pro" }),
+    );
+  });
+
   it("uses inline cookies when cookie sync is disabled", async () => {
     const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
     const exec = createGeminiWebExecutor({});

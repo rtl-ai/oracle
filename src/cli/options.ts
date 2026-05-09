@@ -213,6 +213,15 @@ function isGeminiDeepThinkAlias(normalized: string): boolean {
   );
 }
 
+function isNanoBananaProAlias(normalized: string): boolean {
+  return (
+    normalized.includes("nano-banana-pro") ||
+    normalized.includes("nano_banana_pro") ||
+    normalized.includes("nanobananapro") ||
+    (normalized.includes("nano") && normalized.includes("banana") && normalized.includes("pro"))
+  );
+}
+
 export function resolveApiModel(modelValue: string): ModelName {
   const normalized = normalizeModelOption(modelValue).toLowerCase();
   if (normalized in MODEL_CONFIGS) {
@@ -278,6 +287,11 @@ export function resolveApiModel(modelValue: string): ModelName {
       "Gemini Deep Think is browser-only today. Use --engine browser --model gemini-3-deep-think.",
     );
   }
+  if (isNanoBananaProAlias(normalized)) {
+    throw new InvalidArgumentError(
+      "Nano Banana Pro is wired as a Gemini browser image alias. Use --engine browser --model nano-banana-pro --generate-image <file>.",
+    );
+  }
   if (normalized.includes("gemini")) {
     if (normalized.includes("3.1") || normalized.includes("3_1")) {
       return "gemini-3.1-pro";
@@ -319,6 +333,9 @@ export function inferModelFromLabel(modelValue: string): ModelName {
   }
   if (isGeminiDeepThinkAlias(normalized)) {
     return "gemini-3-pro-deep-think" as ModelName;
+  }
+  if (isNanoBananaProAlias(normalized)) {
+    return "gemini-3.1-pro";
   }
   if (normalized.includes("gemini")) {
     if (normalized.includes("3.1") || normalized.includes("3_1")) {

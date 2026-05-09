@@ -131,6 +131,20 @@ describe("buildBrowserConfig", () => {
     expect(config.desiredModel).toBe("Gemini 3 Pro");
   });
 
+  test("maps Gemini 3.1 Pro to browser label", async () => {
+    const config = await buildBrowserConfig({
+      model: "gemini-3.1-pro",
+    });
+    expect(config.desiredModel).toBe("Gemini 3.1 Pro");
+  });
+
+  test("maps Nano Banana Pro alias to Gemini Pro browser label", async () => {
+    const config = await buildBrowserConfig({
+      model: "nano-banana-pro",
+    });
+    expect(config.desiredModel).toBe("Gemini 3.1 Pro");
+  });
+
   test("maps deep-think Gemini model to deep-think label", async () => {
     const config = await buildBrowserConfig({
       model: "gemini-3-pro-deep-think",

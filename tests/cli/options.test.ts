@@ -193,6 +193,12 @@ describe("resolveApiModel", () => {
     expect(resolveApiModel("Grok 4.1")).toBe("grok-4.1");
   });
 
+  test("rejects Nano Banana Pro in API mode", () => {
+    expect(() => resolveApiModel("nano-banana-pro")).toThrow(
+      "Nano Banana Pro is wired as a Gemini browser image alias",
+    );
+  });
+
   test("rejects codex max until API is available", () => {
     expect(() => resolveApiModel("gpt-5.1-codex-max")).toThrow(
       "gpt-5.1-codex-max is not available yet",
@@ -271,6 +277,11 @@ describe("inferModelFromLabel", () => {
 
   test("preserves Gemini 3.1 labels", () => {
     expect(inferModelFromLabel("Gemini 3.1 Pro")).toBe("gemini-3.1-pro");
+  });
+
+  test("maps Nano Banana Pro labels to the Gemini Pro browser path", () => {
+    expect(inferModelFromLabel("Nano Banana Pro")).toBe("gemini-3.1-pro");
+    expect(inferModelFromLabel("nano-banana-pro")).toBe("gemini-3.1-pro");
   });
 
   test("infers Gemini browser-only deep research labels", () => {

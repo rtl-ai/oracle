@@ -55,6 +55,11 @@ oracle --engine browser --model gemini-3-pro \
   --prompt "a cute robot holding a banana" \
   --generate-image out.jpg --aspect 1:1
 
+# Nano Banana Pro / Gemini Pro image generation alias
+oracle --engine browser --model nano-banana-pro \
+  --prompt "a clean square research-notes app icon, no text" \
+  --generate-image out.png --aspect 1:1
+
 # Edit an image (input via --edit-image, output via --output)
 oracle --engine browser --model gemini-3-pro \
   --prompt "add sunglasses" \
@@ -64,6 +69,7 @@ oracle --engine browser --model gemini-3-pro \
 Notes:
 
 - If your logged-in Gemini account can’t access “Pro”, Oracle will auto-fallback to a supported model for web runs (and logs the fallback in verbose mode).
+- `nano-banana-pro` is a browser-only alias for Gemini Pro image generation on `gemini.google.com`; it does not call the Google API image model directly.
 - This path runs fully in Node/TypeScript (no Python/venv dependency).
 - `--browser-model-strategy` only affects ChatGPT automation; Gemini web always uses the explicit Gemini model ID.
 - `gemini-3-deep-think` and `gemini-3-deep-research` are browser-only for now. `--engine api` rejects them instead of silently falling back to regular Gemini Pro.
@@ -84,7 +90,7 @@ Notes:
 
 ### Gemini web client (cookie-based)
 
-- `src/gemini-web/client.ts` — talks to `gemini.google.com` and downloads generated images via authenticated `gg-dl` redirects.
+- `src/gemini-web/client.ts` — talks to `gemini.google.com` and downloads generated images via authenticated `gg-dl` redirects. `gemini-3.1-pro` and `gemini-3-pro` use the current Gemini Pro web path.
 - `src/gemini-web/executor.ts` — browser-engine executor for Gemini (loads Chrome cookies and runs the web client).
 
 ## Testing

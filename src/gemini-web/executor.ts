@@ -68,6 +68,12 @@ function resolveGeminiWebModel(
   const normalized = desired.toLowerCase().replace(/[_\s]+/g, "-");
 
   switch (normalized) {
+    case "nano-banana-pro":
+    case "nanobananapro":
+    case "gemini-3-pro-image-preview":
+    case "gemini-3.1-pro":
+    case "gemini-3-1-pro":
+      return "gemini-3.1-pro";
     case "gemini-3-pro":
     case "gemini-3.0-pro":
       return "gemini-3-pro";

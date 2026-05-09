@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type GeminiWebModelId =
+  | "gemini-3.1-pro"
   | "gemini-3-pro"
   | "gemini-3-pro-deep-think"
   | "gemini-3-pro-deep-research"
@@ -39,6 +40,7 @@ const USER_AGENT =
 
 const MODEL_HEADER_NAME = "x-goog-ext-525001261-jspb";
 const MODEL_HEADERS: Record<GeminiWebModelId, string> = {
+  "gemini-3.1-pro": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4]]',
   "gemini-3-pro": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4]]',
   "gemini-3-pro-deep-think": '[1,null,null,null,"e6fa609c3fa255c0",null,null,0,[4],null,null,3]',
   "gemini-3-pro-deep-research": '[1,null,null,null,"9d8ca3786ebdfbea",null,null,0,[4]]',
@@ -136,9 +138,10 @@ function extractGgdlUrls(rawText: string): string[] {
 }
 
 function ensureFullSizeImageUrl(url: string): string {
-  if (url.includes("=s2048")) return url;
-  if (url.includes("=s")) return url;
-  return `${url}=s2048`;
+  const normalized = url.replace(/\/+(?==s\d+)/, "").replace(/\/+$/, "");
+  if (normalized.includes("=s2048")) return normalized;
+  if (normalized.includes("=s")) return normalized;
+  return `${normalized}=s2048`;
 }
 
 async function fetchWithCookiePreservingRedirects(

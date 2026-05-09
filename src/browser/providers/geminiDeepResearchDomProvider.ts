@@ -145,18 +145,71 @@ async function typePrompt(ctx: ProviderDomFlowContext): Promise<void> {
   const inputSelector = asSelectorLiteral(GEMINI_DEEP_RESEARCH_SELECTORS.input);
   const typeResult = await ctx.evaluate<string>(
     `(() => {
+      const PROMPT = ${JSON.stringify(ctx.prompt)};
       const editor = document.querySelector(${inputSelector});
       if (!(editor instanceof HTMLElement)) return 'no-editor';
+      const dispatchInputEvents = () => {
+        try {
+          editor.dispatchEvent(
+            new InputEvent('beforeinput', {
+              bubbles: true,
+              composed: true,
+              inputType: 'insertText',
+              data: PROMPT,
+            }),
+          );
+        } catch {}
+        try {
+          editor.dispatchEvent(
+            new InputEvent('input', {
+              bubbles: true,
+              composed: true,
+              inputType: 'insertText',
+              data: PROMPT,
+            }),
+          );
+        } catch {
+          editor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        }
+        editor.dispatchEvent(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true }));
+      };
+      const hasTypedText = () => (editor.textContent || '').trim().length > 0;
+      const placeCaret = () => {
+        const selection = window.getSelection?.();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+      const setParagraphText = () => {
+        editor.textContent = '';
+        const lines = PROMPT.split(/\\r?\\n/);
+        for (const line of lines.length > 0 ? lines : ['']) {
+          const p = document.createElement('p');
+          if (line.length > 0) {
+            p.textContent = line;
+          } else {
+            p.appendChild(document.createElement('br'));
+          }
+          editor.appendChild(p);
+        }
+        editor.classList?.remove('ql-blank');
+        dispatchInputEvents();
+      };
       editor.focus();
+      editor.click?.();
       editor.textContent = '';
+      placeCaret();
       if (typeof document.execCommand === 'function') {
-        document.execCommand('insertText', false, ${JSON.stringify(ctx.prompt)});
-      } else {
-        editor.textContent = ${JSON.stringify(ctx.prompt)};
-        editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: ${JSON.stringify(ctx.prompt)} }));
+        document.execCommand('insertText', false, PROMPT);
+        dispatchInputEvents();
       }
-      const typed = (editor.textContent || '').trim().length > 0;
-      return typed ? 'typed' : 'empty';
+      if (!hasTypedText()) {
+        setParagraphText();
+      }
+      return hasTypedText() ? 'typed' : 'empty';
     })()`,
   );
   if (typeResult !== "typed") {
@@ -173,6 +226,12 @@ async function submitPrompt(ctx: ProviderDomFlowContext): Promise<void> {
     `(() => {
       const btn = document.querySelector(${sendButtonSelectors});
       if (btn instanceof HTMLElement) {
+        if (
+          (btn instanceof HTMLButtonElement && btn.disabled) ||
+          btn.getAttribute('aria-disabled') === 'true'
+        ) {
+          return 'disabled';
+        }
         btn.click();
         return 'clicked';
       }
@@ -219,22 +278,6 @@ async function waitForResponse(
           el.getBoundingClientRect().width > 0 &&
           el.getBoundingClientRect().height > 0;
 
-        const widget = document.querySelector(${selectors.confirmationWidget});
-        if (widget) {
-          const directStart = widget.querySelector(${selectors.startResearchButton});
-          const buttons = Array.from(widget.querySelectorAll('button'));
-          const textStart = buttons.find((btn) =>
-            (btn.textContent || '').toLowerCase().includes('start research')
-          );
-          const start = directStart || textStart;
-          const title = widget.querySelector(${selectors.researchTitle})?.textContent?.trim() || '';
-          if (start instanceof HTMLElement && visible(start)) {
-            start.click();
-            return JSON.stringify({ status: 'started', title });
-          }
-          return JSON.stringify({ status: 'planning', title });
-        }
-
         const panel = document.querySelector(${selectors.immersivePanel});
         if (panel) {
           const content = panel.querySelector(${selectors.reportContent}) || panel;
@@ -243,7 +286,7 @@ async function waitForResponse(
           const loading = Array.from(panel.querySelectorAll(${selectors.loading})).some(visible);
           const exportButton = document.querySelector(${selectors.exportMenuButton});
           const hasExport = exportButton instanceof HTMLElement && visible(exportButton);
-          const complete = (hasExport && text.length > 0) || (!loading && text.length > 500);
+          const complete = hasExport && text.length > 0;
           return JSON.stringify({
             status: complete ? 'done' : 'researching',
             text,
@@ -254,15 +297,22 @@ async function waitForResponse(
           });
         }
 
-        const turns = document.querySelectorAll(${selectors.responseTurn});
-        if (turns.length > 0) {
-          const lastTurn = turns[turns.length - 1];
-          const footer = lastTurn.querySelector(${selectors.responseComplete});
-          const content = lastTurn.querySelector(${selectors.responseText});
-          const text = content?.textContent?.trim() ?? '';
-          if (footer && text.length > 0) {
-            return JSON.stringify({ status: 'done', text, html: content?.innerHTML || '' });
+        const widgets = Array.from(document.querySelectorAll(${selectors.confirmationWidget})).filter(visible);
+        const widget = widgets[widgets.length - 1];
+        if (widget) {
+          const directStart = widget.querySelector(${selectors.startResearchButton});
+          const buttons = Array.from(widget.querySelectorAll('button'));
+          const textStart = buttons.find((btn) =>
+            (btn.textContent || '').toLowerCase().includes('start research') ||
+            (btn.textContent || '').includes('연구 시작')
+          );
+          const start = directStart || textStart;
+          const title = widget.querySelector(${selectors.researchTitle})?.textContent?.trim() || '';
+          if (start instanceof HTMLElement && visible(start)) {
+            start.click();
+            return JSON.stringify({ status: 'started', title });
           }
+          return JSON.stringify({ status: 'planning', title });
         }
 
         return JSON.stringify({ status: 'waiting' });
