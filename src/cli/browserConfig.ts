@@ -43,6 +43,7 @@ const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   ["gpt-5.1", "GPT-5.2"], // Legacy alias → Auto
   ["gemini-3-pro", "Gemini 3 Pro"],
   ["gemini-3-pro-deep-think", "gemini-3-deep-think"],
+  ["gemini-3-pro-deep-research", "gemini-3-deep-research"],
 ];
 
 export interface BrowserFlagOptions {

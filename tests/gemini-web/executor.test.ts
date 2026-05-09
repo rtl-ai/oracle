@@ -153,6 +153,9 @@ describe("gemini-web executor", () => {
       if (source.includes("includes('deep think')")) {
         return { result: { value: "clicked" } };
       }
+      if (source.includes("includes('deep research')")) {
+        return { result: { value: "clicked" } };
+      }
       if (source.includes("Deselect Deep Think")) {
         return { result: { value: true } };
       }
@@ -161,6 +164,18 @@ describe("gemini-web executor", () => {
       }
       if (source.includes("button.send-button")) {
         return { result: { value: "clicked" } };
+      }
+      if (source.includes("deep-research-immersive-panel")) {
+        return {
+          result: {
+            value: JSON.stringify({
+              status: "done",
+              text: "deep-research answer",
+              html: "<p>deep-research answer</p>",
+              length: 20,
+            }),
+          },
+        };
       }
       if (source.includes("response-footer") && source.includes("status: 'done'")) {
         return {
@@ -364,6 +379,25 @@ describe("gemini-web executor", () => {
     expect(runGeminiWebWithFallback).not.toHaveBeenCalled();
   });
 
+  it("uses DOM automation for gemini deep-research without keychain cookie reads", async () => {
+    const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
+    const exec = createGeminiWebExecutor({});
+    const result = await exec({
+      prompt: "research current topic",
+      attachments: [],
+      config: { desiredModel: "gemini-3-deep-research", keepBrowser: false },
+      log: () => {},
+    });
+
+    expect(result.answerText).toBe("deep-research answer");
+    expect(result.answerHtml).toBe("<p>deep-research answer</p>");
+    expect(getCookies).not.toHaveBeenCalled();
+    expect(launchChrome).toHaveBeenCalled();
+    expect(connectWithNewTab).toHaveBeenCalled();
+    expect(closeTab).toHaveBeenCalled();
+    expect(runGeminiWebWithFallback).not.toHaveBeenCalled();
+  });
+
   it("falls back to HTTP/header path for gemini deep-think when attachments are present", async () => {
     const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
     const exec = createGeminiWebExecutor({});
@@ -381,6 +415,23 @@ describe("gemini-web executor", () => {
         files: ["/tmp/attach.txt"],
       }),
     );
+  });
+
+  it("rejects gemini deep-research attachments instead of falling back to plain HTTP", async () => {
+    const { createGeminiWebExecutor } = await import("../../src/gemini-web/executor.js");
+    const exec = createGeminiWebExecutor({});
+
+    await expect(
+      exec({
+        prompt: "research this file",
+        attachments: [{ path: "/tmp/attach.txt", displayPath: "attach.txt" }],
+        config: { desiredModel: "gemini-3-deep-research", chromeProfile: "Default" },
+        log: () => {},
+      }),
+    ).rejects.toThrow(/Deep Research is browser-DOM only/);
+
+    expect(getCookies).not.toHaveBeenCalled();
+    expect(runGeminiWebWithFallback).not.toHaveBeenCalled();
   });
 
   it("keeps the launched browser alive when Deep Think uses the keep-browser default", async () => {

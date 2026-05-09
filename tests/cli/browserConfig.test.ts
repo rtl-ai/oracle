@@ -130,6 +130,13 @@ describe("buildBrowserConfig", () => {
     expect(config.desiredModel).toBe("gemini-3-deep-think");
   });
 
+  test("maps deep-research Gemini model to deep-research label", async () => {
+    const config = await buildBrowserConfig({
+      model: "gemini-3-pro-deep-research",
+    });
+    expect(config.desiredModel).toBe("gemini-3-deep-research");
+  });
+
   test("trims whitespace around override labels", async () => {
     const config = await buildBrowserConfig({
       model: "gpt-5.1",
