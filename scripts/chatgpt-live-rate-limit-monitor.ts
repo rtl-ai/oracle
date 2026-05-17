@@ -117,7 +117,7 @@ async function readActivePort(profileDir: string): Promise<number | null> {
     }
   }
   candidatePorts.push(...(await readActivePortsFromProcessList(profileDir)));
-  for (const port of [...new Set(candidatePorts)]) {
+  for (const port of new Set(candidatePorts)) {
     if (await isDevtoolsPortReachable(port)) return port;
   }
   return null;
@@ -185,7 +185,7 @@ function isRelevantUrl(url: string) {
 
 function isChatGptPageTarget(target: { type?: string; url?: string }) {
   const url = target.url ?? "";
-  return target.type === "page" && /^https:\/\/chatgpt\.com\//.test(url);
+  return target.type === "page" && url.startsWith("https://chatgpt.com/");
 }
 
 function nowIso() {

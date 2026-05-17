@@ -9,6 +9,13 @@ import { formatClaudeMcpConfig } from "../../src/cli/bridge/claudeConfig.ts";
 const execFileAsync = promisify(execFile);
 const CLI_ENTRY = path.join(process.cwd(), "bin", "oracle-cli.ts");
 
+function stripNodeRuntimeWarnings(stderr: string): string {
+  return stderr.replace(
+    /^\(node:\d+\) \[DEP0205\] DeprecationWarning: `module\.register\(\)` is deprecated\. Use `module\.registerHooks\(\)` instead\.\n\(Use `node --trace-deprecation \.\.\.` to show where the warning was created\)\n?/gm,
+    "",
+  );
+}
+
 describe("formatClaudeMcpConfig", () => {
   test("prints a remote Claude Code MCP config without exposing tokens by default", () => {
     const parsed = JSON.parse(
@@ -73,7 +80,7 @@ describe("formatClaudeMcpConfig", () => {
       );
 
       const parsed = JSON.parse(stdout);
-      expect(stderr.trim()).toBe("");
+      expect(stripNodeRuntimeWarnings(stderr).trim()).toBe("");
       expect(parsed.mcpServers.oracle.env).toEqual({
         ORACLE_ENGINE: "browser",
         ORACLE_HOME_DIR: oracleHome,

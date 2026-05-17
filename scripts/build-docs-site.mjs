@@ -65,7 +65,7 @@ const sections = [
   ],
 ];
 
-const buildExcludes = [/^debug\//, /^testing\//];
+const buildExcludes = [/^testing\//];
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });

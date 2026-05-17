@@ -413,10 +413,6 @@ function summarize(rows: EventRow[], opts: Options, runDir: string) {
   };
 }
 
-function conversationsUrlForOffset(offset: number) {
-  return `https://chatgpt.com/backend-api/conversations?offset=${offset}&limit=28&order=updated&is_archived=false&is_starred=false`;
-}
-
 function resolveProbeUrls(rows: EventRow[], opts: Options): string[] {
   if (opts.targetSet === "main") return [CONVERSATIONS_URL];
   const urls = new Set<string>();
