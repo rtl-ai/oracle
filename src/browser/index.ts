@@ -1236,7 +1236,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
     }
     const imageArtifactMinTurnIndex = baselineTurns;
     if (deepResearch) {
-      await raceWithDisconnect(waitForResearchPlanAutoConfirm(Runtime, logger));
+      await raceWithDisconnect(
+        waitForResearchPlanAutoConfirm(Runtime, logger, undefined, Page, client),
+      );
       const researchResult = await raceWithDisconnect(
         waitForDeepResearchCompletion(
           Runtime,
@@ -2587,7 +2589,7 @@ async function runRemoteBrowserMode(
     baselineAssistantText = submission.baselineAssistantText;
     const imageArtifactMinTurnIndex = baselineTurns;
     if (deepResearch) {
-      await waitForResearchPlanAutoConfirm(Runtime, logger);
+      await waitForResearchPlanAutoConfirm(Runtime, logger, undefined, Page, client);
       const researchResult = await waitForDeepResearchCompletion(
         Runtime,
         logger,

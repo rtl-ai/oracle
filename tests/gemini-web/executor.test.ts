@@ -136,7 +136,7 @@ describe("gemini-web executor", () => {
     });
     const runtimeEvaluate = vi.fn(async ({ expression }: { expression?: string }) => {
       const source = String(expression ?? "");
-      if (source.includes("requiresLogin")) {
+      if (source.includes("ready: Boolean(editor)") && source.includes("requiresLogin")) {
         return {
           result: {
             value: {
@@ -154,7 +154,7 @@ describe("gemini-web executor", () => {
         return { result: { value: "clicked" } };
       }
       if (source.includes("includes('deep research')")) {
-        return { result: { value: "clicked" } };
+        return { result: { value: { status: "clicked", available: ["Deep research"] } } };
       }
       if (source.includes("Deselect Deep Think")) {
         return { result: { value: true } };

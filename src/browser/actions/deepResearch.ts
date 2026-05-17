@@ -81,33 +81,52 @@ export async function waitForResearchPlanAutoConfirm(
   Runtime: ChromeClient["Runtime"],
   logger: BrowserLogger,
   autoConfirmWaitMs: number = DEEP_RESEARCH_AUTO_CONFIRM_WAIT_MS,
+  Page?: ChromeClient["Page"],
+  client?: ChromeClient,
 ): Promise<void> {
   // Phase A: Detect research plan appearance (up to 60s)
   const planDeadline = Date.now() + 60_000;
   let planDetected = false;
+  let blankShellSeen = false;
+  let largeIframeSeen = false;
 
   while (Date.now() < planDeadline) {
     const { result } = await Runtime.evaluate({
       expression: `(() => {
         const iframes = document.querySelectorAll('iframe');
-        const hasResearchIframe = Array.from(iframes).some(f => {
+        const hasLargeResearchIframe = Array.from(iframes).some(f => {
           const rect = f.getBoundingClientRect();
-          return rect.width > 200 && rect.height > 200;
+          const src = String(f.getAttribute('src') || f.src || '').toLowerCase();
+          const title = String(f.getAttribute('title') || '').toLowerCase();
+          return rect.width > 200 && rect.height > 200 &&
+            (src.includes('deep_research') || src.includes('deep-research') || title.includes('deep-research'));
         });
         const assistantText = (document.querySelector('[data-message-author-role="assistant"]')?.textContent || '').toLowerCase();
         const hasResearchText = assistantText.includes('researching') ||
           assistantText.includes('research plan') ||
           assistantText.includes('survey') ||
           assistantText.includes('analyze');
-        return { hasResearchIframe, hasResearchText };
+        return { hasLargeResearchIframe, hasResearchText };
       })()`,
       returnByValue: true,
     });
 
     const val = result?.value as
-      | { hasResearchIframe?: boolean; hasResearchText?: boolean }
+      | { hasLargeResearchIframe?: boolean; hasResearchText?: boolean }
       | undefined;
-    if (val?.hasResearchIframe || val?.hasResearchText) {
+    largeIframeSeen ||= Boolean(val?.hasLargeResearchIframe);
+    const frameResult = Page
+      ? await readDeepResearchFrameResult(Runtime, Page).catch(() => null)
+      : client
+        ? await readDeepResearchTargetResult(client).catch(() => null)
+        : null;
+    blankShellSeen ||= Boolean(frameResult?.blankShell);
+    const hasMeaningfulFrame =
+      Boolean(frameResult?.completed) ||
+      Boolean(frameResult?.inProgress) ||
+      (frameResult?.textLength ?? 0) >= 20;
+
+    if (val?.hasResearchText || hasMeaningfulFrame) {
       planDetected = true;
       logger("Research plan detected, waiting for auto-confirm countdown...");
       break;
@@ -116,10 +135,20 @@ export async function waitForResearchPlanAutoConfirm(
   }
 
   if (!planDetected) {
-    logger(
-      "Warning: Research plan not detected within 60s; continuing (may have auto-confirmed already)",
+    const detail = blankShellSeen
+      ? " The Deep Research connector iframe was present, but its root frame stayed blank."
+      : largeIframeSeen
+        ? " A Deep Research iframe was present, but it never exposed plan or progress text."
+        : "";
+    throw new BrowserAutomationError(
+      `Deep Research did not start within 60s after prompt submission.${detail}`,
+      {
+        stage: "deep-research-plan",
+        code: "deep-research-plan-not-started",
+        blankShellSeen,
+        largeIframeSeen,
+      },
     );
-    return;
   }
 
   // Phase B: Wait for auto-confirm countdown
@@ -141,8 +170,13 @@ export async function waitForResearchPlanAutoConfirm(
       returnByValue: true,
     });
     const val = result?.value as { hasLargeIframe?: boolean; isResearching?: boolean } | undefined;
+    const frameResult = Page
+      ? await readDeepResearchFrameResult(Runtime, Page).catch(() => null)
+      : client
+        ? await readDeepResearchTargetResult(client).catch(() => null)
+        : null;
 
-    if (val?.isResearching) {
+    if (val?.isResearching || frameResult?.inProgress || frameResult?.textLength) {
       logger("Research plan confirmed, execution started");
       return;
     }
@@ -172,6 +206,7 @@ export async function waitForDeepResearchCompletion(
   const start = Date.now();
   let lastLogTime = start;
   let lastTextLength = 0;
+  let blankShellSince: number | null = null;
   const minTurnLiteral =
     typeof minTurnIndex === "number" && Number.isFinite(minTurnIndex) && minTurnIndex >= 0
       ? Math.floor(minTurnIndex)
@@ -208,6 +243,27 @@ export async function waitForDeepResearchCompletion(
       : client
         ? await readDeepResearchTargetResult(client).catch(() => null)
         : null;
+    const now = Date.now();
+    const blankShellOnly =
+      Boolean(frameResult?.blankShell) &&
+      !frameResult?.inProgress &&
+      !val?.stopVisible &&
+      (val?.textLength ?? 0) < 40;
+    if (blankShellOnly) {
+      blankShellSince ??= now;
+      if (now - blankShellSince >= 180_000) {
+        throw new BrowserAutomationError(
+          "Deep Research connector iframe stayed blank after prompt submission; the research job did not actually start.",
+          {
+            stage: "deep-research-blank-shell",
+            code: "deep-research-blank-shell",
+            elapsedMs: now - start,
+          },
+        );
+      }
+    } else {
+      blankShellSince = null;
+    }
     const scopedToNewTurns = minTurnLiteral >= 0;
     if (
       frameResult?.completed &&
@@ -229,16 +285,14 @@ export async function waitForDeepResearchCompletion(
     }
 
     // Progress logging every 60 seconds
-    const now = Date.now();
     if (now - lastLogTime >= 60_000) {
       const elapsed = Math.round((now - start) / 1000);
       const chars = Math.max(val?.textLength ?? 0, frameResult?.textLength ?? 0);
-      const phase =
-        frameResult?.inProgress || val?.hasIframe
-          ? "researching"
-          : val?.stopVisible
-            ? "generating"
-            : "waiting";
+      const phase = frameResult?.inProgress
+        ? "researching"
+        : val?.stopVisible
+          ? "generating"
+          : "waiting";
       logger(`Deep Research ${phase}... ${elapsed}s elapsed, ~${chars} chars`);
       lastLogTime = now;
     }
@@ -322,6 +376,7 @@ interface DeepResearchFrameStatus {
   textLength: number;
   text?: string;
   html?: string;
+  blankShell?: boolean;
 }
 
 async function readDeepResearchFrameResult(
@@ -430,7 +485,7 @@ async function readDeepResearchTargetResult(
       if (value?.completed) {
         return value;
       }
-      if (value?.inProgress || value?.textLength) {
+      if (value?.inProgress || value?.textLength || value?.blankShell) {
         return value;
       }
     }
@@ -496,7 +551,11 @@ async function readDeepResearchTargetSession(
     if (value?.completed) {
       return value;
     }
-    if ((value?.textLength ?? 0) > (best?.textLength ?? 0) || value?.inProgress) {
+    if (
+      (value?.textLength ?? 0) > (best?.textLength ?? 0) ||
+      value?.inProgress ||
+      (value?.blankShell && !best)
+    ) {
       best = value;
     }
   }
@@ -505,7 +564,11 @@ async function readDeepResearchTargetSession(
   if (topFrameValue?.completed) {
     return topFrameValue;
   }
-  if ((topFrameValue?.textLength ?? 0) > (best?.textLength ?? 0) || topFrameValue?.inProgress) {
+  if (
+    (topFrameValue?.textLength ?? 0) > (best?.textLength ?? 0) ||
+    topFrameValue?.inProgress ||
+    (topFrameValue?.blankShell && !best)
+  ) {
     best = topFrameValue;
   }
 
@@ -594,8 +657,13 @@ function collectDeepResearchFrameIds(tree: DeepResearchFrameTree | undefined): s
 
 function buildDeepResearchFrameStatusExpression(): string {
   return `(() => {
-    const rawText = document.body?.innerText || '';
-    const html = document.body?.innerHTML || '';
+	    const rawText = document.body?.innerText || '';
+	    const html = document.body?.innerHTML || '';
+	    const childIframes = Array.from(document.querySelectorAll?.('iframe') || []).map((frame) => {
+	      const src = String(frame.getAttribute('src') || frame.src || '');
+	      const rect = frame.getBoundingClientRect();
+	      return { src, width: rect.width, height: rect.height, id: frame.id || '' };
+	    });
     const isPlaceholder = (line) => /^(called tool|used tool|użyto narzędzia|narzędzie wywołane)$/i.test(line);
     const isCompletionLine = (line) =>
       /^(research completed|badanie ukończone)\\b/i.test(line);
@@ -630,18 +698,21 @@ function buildDeepResearchFrameStatusExpression(): string {
       return reportLines.join('\\n').trim();
     };
     const reportText = normalizeReport(rawText);
-    const completed = /research completed|badanie ukończone/i.test(rawText) &&
-      reportText.length >= 40 &&
-      !isPlaceholder(reportText);
-    const inProgress = /researching|badanie|searching|searches|wyszukiwa|citation|cytat|source|źród|reading|completed|ukończone/i.test(rawText);
-    return {
-      completed,
-      inProgress,
-      textLength: reportText.length || rawText.trim().length,
-      text: completed ? reportText : undefined,
-      html: completed ? html : undefined,
-    };
-  })()`;
+	    const completed = /research completed|badanie ukończone/i.test(rawText) &&
+	      reportText.length >= 40 &&
+	      !isPlaceholder(reportText);
+	    const inProgress = /researching|badanie|searching|searches|wyszukiwa|citation|cytat|source|źród|reading|completed|ukończone/i.test(rawText);
+	    const blankShell = rawText.trim().length === 0 &&
+	      childIframes.some((frame) => frame.src === 'about:blank' && frame.width > 200 && frame.height > 100);
+	    return {
+	      completed,
+	      inProgress,
+	      textLength: reportText.length || rawText.trim().length,
+	      text: completed ? reportText : undefined,
+	      html: completed ? html : undefined,
+	      blankShell,
+	    };
+	  })()`;
 }
 
 export function findDeepResearchFrameIdForTest(
@@ -709,17 +780,18 @@ function buildDeepResearchStatusExpression(): string {
     const turns = document.querySelectorAll('[data-message-author-role="assistant"]');
     const lastTurn = turns[turns.length - 1];
     const finished = Boolean(lastTurn?.querySelector?.(${finishedSelector}));
-    const text = (lastTurn?.textContent || '').trim();
-    const normalized = text.toLowerCase().replace(/\\s+/g, ' ').trim();
-    const placeholderOnly = /^(called tool|used tool|użyto narzędzia|narzędzie wywołane)$/.test(normalized);
-    const textLength = text.length;
-    return {
-      completed: finished && !placeholderOnly && textLength >= 40,
-      inProgress: stopVisible || iframes.length > 0,
-      hasIframe: iframes.length > 0,
-      textLength,
-      placeholderOnly,
-    };
+	    const text = (lastTurn?.textContent || '').trim();
+	    const normalized = text.toLowerCase().replace(/\\s+/g, ' ').trim();
+	    const placeholderOnly = /^(called tool|used tool|użyto narzędzia|narzędzie wywołane)$/.test(normalized);
+	    const textLength = text.length;
+	    const hasProgressText = /researching|reading sources|searching|considering|research plan|research completed/i.test(text);
+	    return {
+	      completed: finished && !placeholderOnly && textLength >= 40,
+	      inProgress: stopVisible || hasProgressText,
+	      hasIframe: iframes.length > 0,
+	      textLength,
+	      placeholderOnly,
+	    };
   })()`;
 }
 

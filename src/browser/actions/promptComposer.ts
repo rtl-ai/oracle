@@ -201,7 +201,7 @@ export async function submitPrompt(
     );
   }
 
-  const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames);
+  const clicked = await attemptSendButton(runtime, logger, deps?.attachmentNames, input);
   if (!clicked) {
     await input.dispatchKeyEvent({
       type: "keyDown",
@@ -392,8 +392,9 @@ async function attemptSendButton(
   Runtime: ChromeClient["Runtime"],
   _logger?: BrowserLogger,
   attachmentNames?: string[],
+  Input?: ChromeClient["Input"],
 ): Promise<boolean> {
-  const script = `(() => {
+  const probeScript = `(() => {
     ${buildClickDispatcher()}
     const selectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
     const isVisible = (node) => {
@@ -420,10 +421,44 @@ async function attemptSendButton(
       candidates.push(...Array.from(document.querySelectorAll(selector)));
     }
     const button = candidates.find((node) => isVisible(node) && isEnabled(node)) || null;
-    if (!button) return 'missing';
-    // Use unified pointer/mouse sequence to satisfy React handlers.
+    if (!button) return { status: candidates.length > 0 ? 'disabled' : 'missing' };
+    const rect = button.getBoundingClientRect();
+    return {
+      status: 'ready',
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  })()`;
+  const domClickScript = `(() => {
+    ${buildClickDispatcher()}
+    const selectors = ${JSON.stringify(SEND_BUTTON_SELECTORS)};
+    const isVisible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const style = window.getComputedStyle(node);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const isEnabled = (node) => {
+      const ariaDisabled = node.getAttribute('aria-disabled');
+      const dataDisabled = node.getAttribute('data-disabled');
+      const style = window.getComputedStyle(node);
+      return !(
+        node.hasAttribute('disabled') ||
+        ariaDisabled === 'true' ||
+        dataDisabled === 'true' ||
+        style.pointerEvents === 'none' ||
+        style.display === 'none'
+      );
+    };
+    const candidates = [];
+    for (const selector of selectors) {
+      candidates.push(...Array.from(document.querySelectorAll(selector)));
+    }
+    const button = candidates.find((node) => isVisible(node) && isEnabled(node)) || null;
+    if (!button) return false;
     dispatchClickSequence(button);
-    return 'clicked';
+    return true;
   })()`;
 
   const deadline = Date.now() + 20_000;
@@ -439,11 +474,34 @@ async function attemptSendButton(
         continue;
       }
     }
-    const { result } = await Runtime.evaluate({ expression: script, returnByValue: true });
-    if (result.value === "clicked") {
+    const { result } = await Runtime.evaluate({ expression: probeScript, returnByValue: true });
+    const value = result.value as { status?: string; x?: number; y?: number } | string | undefined;
+    const status = typeof value === "string" ? value : value?.status;
+    if (status === "ready") {
+      const x = typeof value === "object" ? value.x : undefined;
+      const y = typeof value === "object" ? value.y : undefined;
+      if (Input && typeof x === "number" && typeof y === "number") {
+        await Input.dispatchMouseEvent({ type: "mouseMoved", x, y, button: "none" });
+        await Input.dispatchMouseEvent({
+          type: "mousePressed",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+        await Input.dispatchMouseEvent({
+          type: "mouseReleased",
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        });
+      } else {
+        await Runtime.evaluate({ expression: domClickScript, returnByValue: true });
+      }
       return true;
     }
-    if (result.value === "missing") {
+    if (status === "missing") {
       break;
     }
     await delay(100);

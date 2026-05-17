@@ -196,18 +196,40 @@ describe("waitForResearchPlanAutoConfirm", () => {
     mockLogger = createMockLogger();
   });
 
-  it("detects research plan via iframe and waits for auto-confirm", async () => {
-    // Phase A: plan detected via iframe
+  it("detects research plan via Deep Research frame content and waits for auto-confirm", async () => {
+    // Phase A: large iframe is present, but the plan is only trusted once
+    // the frame exposes real progress/content instead of a blank shell.
     mockRuntime.evaluate.mockResolvedValueOnce({
-      result: { value: { hasResearchIframe: true, hasResearchText: false } },
+      result: { value: { hasLargeResearchIframe: true, hasResearchText: false } },
+    });
+    mockRuntime.evaluate.mockResolvedValueOnce({
+      result: {
+        value: { completed: false, inProgress: true, textLength: 30, blankShell: false },
+      },
     });
     // Phase B: research started
     mockRuntime.evaluate.mockResolvedValue({
       result: { value: { hasLargeIframe: false, isResearching: true } },
     });
+    const mockPage = {
+      getFrameTree: vi.fn().mockResolvedValue({
+        frameTree: {
+          frame: { id: "root", url: "https://chatgpt.com/" },
+          childFrames: [
+            {
+              frame: {
+                id: "deep-frame",
+                url: "https://connector_openai_deep_research.web-sandbox.oaiusercontent.com/",
+              },
+            },
+          ],
+        },
+      }),
+      createIsolatedWorld: vi.fn().mockResolvedValue({ executionContextId: 42 }),
+    };
 
     await expect(
-      waitForResearchPlanAutoConfirm(mockRuntime as never, mockLogger, 1_000),
+      waitForResearchPlanAutoConfirm(mockRuntime as never, mockLogger, 1_000, mockPage as never),
     ).resolves.toBeUndefined();
     expect(mockLogger).toHaveBeenCalledWith(expect.stringContaining("Research plan detected"));
   });
@@ -215,7 +237,7 @@ describe("waitForResearchPlanAutoConfirm", () => {
   it("detects research plan via text content", async () => {
     // Phase A: plan detected via text
     mockRuntime.evaluate.mockResolvedValueOnce({
-      result: { value: { hasResearchIframe: false, hasResearchText: true } },
+      result: { value: { hasLargeResearchIframe: false, hasResearchText: true } },
     });
     // Phase B: research started
     mockRuntime.evaluate.mockResolvedValue({
@@ -227,10 +249,10 @@ describe("waitForResearchPlanAutoConfirm", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("handles plan not detected gracefully", async () => {
+  it("throws when a research plan never starts", async () => {
     // All polls: nothing detected — use short timeout to avoid slow test
     mockRuntime.evaluate.mockResolvedValue({
-      result: { value: { hasResearchIframe: false, hasResearchText: false } },
+      result: { value: { hasLargeResearchIframe: false, hasResearchText: false } },
     });
 
     // Override planDeadline by passing very short auto-confirm wait
@@ -249,8 +271,7 @@ describe("waitForResearchPlanAutoConfirm", () => {
 
     await expect(
       waitForResearchPlanAutoConfirm(mockRuntime as never, mockLogger, 100),
-    ).resolves.toBeUndefined();
-    expect(mockLogger).toHaveBeenCalledWith(expect.stringContaining("not detected"));
+    ).rejects.toThrow(/did not start/);
 
     vi.spyOn(Date, "now").mockRestore();
   });

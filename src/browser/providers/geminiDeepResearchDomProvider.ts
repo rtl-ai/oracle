@@ -121,21 +121,52 @@ async function selectMode(ctx: ProviderDomFlowContext): Promise<void> {
   await ctx.delay(1_000);
 
   const menuItemSelectors = asSelectorLiteral(GEMINI_DEEP_RESEARCH_SELECTORS.toolsMenuItem);
-  const deepResearchClickResult = await ctx.evaluate<string>(
+  const deepResearchClickResult = await ctx.evaluate<{
+    status?: string;
+    available?: string[];
+    requiresLogin?: boolean;
+  }>(
     `(() => {
       const items = Array.from(document.querySelectorAll(${menuItemSelectors}));
+      const isDisabled = (node) => {
+        if (!(node instanceof HTMLElement)) return true;
+        const classText = String(node.className || '').toLowerCase();
+        return (
+          (node instanceof HTMLButtonElement && node.disabled) ||
+          node.getAttribute('aria-disabled') === 'true' ||
+          classText.includes('disabled') ||
+          node.closest('.disabled, .mdc-list-item--disabled')
+        );
+      };
+      const available = items
+        .map((item) => item.textContent?.trim() || item.getAttribute('aria-label') || '')
+        .filter(Boolean);
+      const pageText = (document.body?.innerText || '').toLowerCase();
+      const requiresLogin = pageText.includes('sign in') || pageText.includes('로그인');
       for (const item of items) {
         const text = item.textContent?.trim().toLowerCase() ?? '';
         const label = item.getAttribute('aria-label')?.toLowerCase() ?? '';
         if (!text.includes('deep research') && !label.includes('deep research')) continue;
+        if (isDisabled(item)) {
+          return { status: 'disabled', available, requiresLogin };
+        }
         if (item instanceof HTMLElement) item.click();
-        return 'clicked';
+        return { status: 'clicked', available, requiresLogin };
       }
-      return 'not-found';
+      return { status: 'not-found', available, requiresLogin };
     })()`,
   );
-  if (deepResearchClickResult !== "clicked") {
-    throw new Error('Unable to select "Deep Research" from Gemini tools menu.');
+  if (deepResearchClickResult?.status === "disabled") {
+    const guidance = deepResearchClickResult.requiresLogin
+      ? " Gemini is showing a sign-in prompt; sign in to Gemini in the browser profile and retry."
+      : " The feature may require a Gemini Advanced/Pro entitlement or a different account.";
+    throw new Error(`Gemini Deep Research is disabled in the Tools menu.${guidance}`);
+  }
+  if (deepResearchClickResult?.status !== "clicked") {
+    const available = deepResearchClickResult?.available?.length
+      ? ` Available tools: ${deepResearchClickResult.available.join(", ")}.`
+      : "";
+    throw new Error(`Unable to select "Deep Research" from Gemini tools menu.${available}`);
   }
   await ctx.delay(1_500);
 }
