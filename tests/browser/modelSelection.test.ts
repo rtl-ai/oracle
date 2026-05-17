@@ -86,7 +86,7 @@ describe("browser model selection matchers", () => {
   it("recognizes current GPT-5.5 visible aliases in the picker expression", () => {
     const expression = buildModelSelectionExpressionForTest("gpt-5.5-pro");
     expect(expression).toContain("isTargetGpt55VisibleAlias");
-    expect(expression).toContain("label.includes('pro') && label.includes('extended')");
+    expect(expression).toContain("label.includes('pro') && !label.includes('thinking')");
     expect(expression).toContain("desiredVersion === '5-5'");
   });
 
@@ -132,6 +132,7 @@ describe("browser model selection matchers", () => {
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "ChatGPT")).toThrow(
       /requires GPT-5.5 Pro Extended/,
     );
+    expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Pro")).not.toThrow();
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "GPT-5.5 Pro")).not.toThrow();
   });
 

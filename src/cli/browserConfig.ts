@@ -125,6 +125,10 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
   return model;
 }
 
+function defaultBrowserThinkingTimeForModel(model: ModelName): ThinkingTimeLevel | undefined {
+  return normalizeChatGptModelForBrowser(model) === "gpt-5.5-pro" ? "extended" : undefined;
+}
+
 export async function buildBrowserConfig(
   options: BrowserFlagOptions,
 ): Promise<BrowserSessionConfig> {
@@ -235,7 +239,7 @@ export async function buildBrowserConfig(
     allowCookieErrors: options.browserAllowCookieErrors ?? true,
     remoteChrome,
     browserTabRef: options.browserTab ?? undefined,
-    thinkingTime: options.browserThinkingTime,
+    thinkingTime: options.browserThinkingTime ?? defaultBrowserThinkingTimeForModel(options.model),
     researchMode: options.browserResearch === "deep" ? "deep" : "off",
     archiveConversations: options.browserArchive,
   };

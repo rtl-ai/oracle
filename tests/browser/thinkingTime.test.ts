@@ -27,9 +27,16 @@ describe("browser thinking-time selection expression", () => {
   it("supports ChatGPT's model-menu thinking effort control", () => {
     const expression = buildThinkingTimeExpressionForTest("extended");
     expect(expression).toContain("MODEL_BUTTON_SELECTOR");
+    expect(expression).toContain("COMPOSER_MODEL_SIGNAL_SELECTOR");
     expect(expression).toContain("data-model-picker-thinking-effort-action");
     expect(expression).toContain("aria-controls");
     expect(expression).toContain("LEVEL_TOKENS");
+  });
+
+  it("treats an already visible Pro Extended model signal as selected", () => {
+    const expression = buildThinkingTimeExpressionForTest("extended");
+    expect(expression).toContain("activeModelAlreadyImpliesTarget");
+    expect(expression).toContain("signal.includes('pro') && signal.includes('extended')");
   });
 
   it("preserves Chinese thinking-effort labels while normalizing", () => {

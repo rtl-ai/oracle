@@ -164,7 +164,7 @@ function buildModelSelectionExpression(
       if (desiredVersion !== '5-5') return false;
       const label = normalizeText(value);
       if (wantsPro) {
-        return label.includes('pro') && label.includes('extended') && !label.includes('thinking');
+        return label.includes('pro') && !label.includes('thinking');
       }
       if (wantsThinking) {
         return label.includes('thinking') && label.includes('heavy') && !label.includes('pro');

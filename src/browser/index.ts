@@ -164,11 +164,23 @@ function shouldSkipThinkingTimeSelection(
     return false;
   }
   const normalized = desiredModel.toLowerCase();
+  return normalized.includes("pro") && normalized.includes("extended");
+}
+
+function shouldRequireThinkingTimeSelection(
+  desiredModel: string | null | undefined,
+  thinkingTime: ResolvedBrowserConfig["thinkingTime"],
+): boolean {
+  if (thinkingTime !== "extended" || !desiredModel) {
+    return false;
+  }
+  const normalized = desiredModel.toLowerCase();
   return (
-    normalized === "gpt-5.5-pro" ||
-    normalized.includes("gpt-5.5 pro") ||
-    normalized.includes("gpt 5.5 pro") ||
-    normalized.includes("gpt 5 5 pro")
+    !shouldSkipThinkingTimeSelection(desiredModel, thinkingTime) &&
+    (normalized === "gpt-5.5-pro" ||
+      normalized.includes("gpt-5.5 pro") ||
+      normalized.includes("gpt 5.5 pro") ||
+      normalized.includes("gpt 5 5 pro"))
   );
 }
 
@@ -177,6 +189,13 @@ export function shouldSkipThinkingTimeSelectionForTest(
   thinkingTime: ResolvedBrowserConfig["thinkingTime"],
 ): boolean {
   return shouldSkipThinkingTimeSelection(desiredModel, thinkingTime);
+}
+
+export function shouldRequireThinkingTimeSelectionForTest(
+  desiredModel: string | null | undefined,
+  thinkingTime: ResolvedBrowserConfig["thinkingTime"],
+): boolean {
+  return shouldRequireThinkingTimeSelection(desiredModel, thinkingTime);
 }
 
 function listIgnoredRemoteChromeFlags(config: {
@@ -1004,8 +1023,9 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       if (shouldSkipThinkingTimeSelection(config.desiredModel, thinkingTime)) {
         logger("Thinking time: Pro Extended (via model selection)");
       } else {
+        const required = shouldRequireThinkingTimeSelection(config.desiredModel, thinkingTime);
         await raceWithDisconnect(
-          withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger), {
+          withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger, { required }), {
             retries: 2,
             delayMs: 300,
             onRetry: (attempt, error) => {
@@ -2394,7 +2414,8 @@ async function runRemoteBrowserMode(
       if (shouldSkipThinkingTimeSelection(config.desiredModel, thinkingTime)) {
         logger("Thinking time: Pro Extended (via model selection)");
       } else {
-        await withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger), {
+        const required = shouldRequireThinkingTimeSelection(config.desiredModel, thinkingTime);
+        await withRetries(() => ensureThinkingTime(Runtime, thinkingTime, logger, { required }), {
           retries: 2,
           delayMs: 300,
           onRetry: (attempt, error) => {

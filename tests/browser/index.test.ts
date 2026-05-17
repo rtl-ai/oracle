@@ -9,6 +9,7 @@ import {
   resolveRemoteTabLeaseProfileDirForTest,
   runBrowserMode,
   runSubmissionWithRecoveryForTest,
+  shouldRequireThinkingTimeSelectionForTest,
   shouldSkipThinkingTimeSelectionForTest,
   shouldPreferSystemTmpDirForTest,
   shouldPreserveBrowserOnErrorForTest,
@@ -111,15 +112,25 @@ describe("browser run target cleanup", () => {
 });
 
 describe("shouldSkipThinkingTimeSelectionForTest", () => {
-  test("treats GPT-5.5 Pro Extended as resolved by model selection", () => {
-    expect(shouldSkipThinkingTimeSelectionForTest("GPT-5.5 Pro", "extended")).toBe(true);
-    expect(shouldSkipThinkingTimeSelectionForTest("gpt-5.5-pro", "extended")).toBe(true);
+  test("skips only when the selected model label already says Pro Extended", () => {
+    expect(shouldSkipThinkingTimeSelectionForTest("GPT-5.5 Pro Extended", "extended")).toBe(true);
+    expect(shouldSkipThinkingTimeSelectionForTest("GPT-5.5 Pro", "extended")).toBe(false);
+    expect(shouldSkipThinkingTimeSelectionForTest("gpt-5.5-pro", "extended")).toBe(false);
   });
 
   test("keeps explicit effort selection for non-Pro or non-extended requests", () => {
     expect(shouldSkipThinkingTimeSelectionForTest("gpt-5.5", "heavy")).toBe(false);
     expect(shouldSkipThinkingTimeSelectionForTest("GPT-5.5 Pro", "heavy")).toBe(false);
     expect(shouldSkipThinkingTimeSelectionForTest("GPT-5.2", "extended")).toBe(false);
+  });
+
+  test("requires Extended effort for GPT-5.5 Pro labels that are not already Extended", () => {
+    expect(shouldRequireThinkingTimeSelectionForTest("GPT-5.5 Pro", "extended")).toBe(true);
+    expect(shouldRequireThinkingTimeSelectionForTest("gpt-5.5-pro", "extended")).toBe(true);
+    expect(shouldRequireThinkingTimeSelectionForTest("GPT-5.5 Pro Extended", "extended")).toBe(
+      false,
+    );
+    expect(shouldRequireThinkingTimeSelectionForTest("gpt-5.5", "heavy")).toBe(false);
   });
 });
 

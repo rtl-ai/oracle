@@ -16,6 +16,7 @@ describe("buildBrowserConfig", () => {
       keepBrowser: undefined,
       hideWindow: undefined,
       desiredModel: "GPT-5.5 Pro",
+      thinkingTime: "extended",
       debug: undefined,
       allowCookieErrors: true,
       researchMode: "off",
@@ -26,6 +27,22 @@ describe("buildBrowserConfig", () => {
   test("maps gpt-5.4 browser runs to Thinking 5.4", async () => {
     const config = await buildBrowserConfig({ model: "gpt-5.4" });
     expect(config.desiredModel).toBe("Thinking 5.4");
+    expect(config.thinkingTime).toBeUndefined();
+  });
+
+  test("defaults GPT-5.5 Pro browser runs to Extended effort", async () => {
+    const config = await buildBrowserConfig({ model: "gpt-5.5-pro" });
+    expect(config.desiredModel).toBe("GPT-5.5 Pro");
+    expect(config.thinkingTime).toBe("extended");
+  });
+
+  test("keeps explicit Thinking Heavy separate from GPT-5.5 Pro Extended", async () => {
+    const config = await buildBrowserConfig({
+      model: "gpt-5.5",
+      browserThinkingTime: "heavy",
+    });
+    expect(config.desiredModel).toBe("Thinking 5.5");
+    expect(config.thinkingTime).toBe("heavy");
   });
 
   test("sets model strategy when provided", async () => {

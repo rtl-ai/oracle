@@ -1,6 +1,7 @@
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import type { ThinkingTimeLevel } from "../../oracle/types.js";
 import {
+  COMPOSER_MODEL_SIGNAL_SELECTOR,
   MENU_CONTAINER_SELECTOR,
   MENU_ITEM_SELECTOR,
   MODEL_BUTTON_SELECTOR,
@@ -14,6 +15,10 @@ type ThinkingTimeOutcome =
   | { status: "chip-not-found" }
   | { status: "menu-not-found" }
   | { status: "option-not-found" };
+
+interface ThinkingTimeOptions {
+  required?: boolean;
+}
 
 /**
  * Selects a specific thinking time level in ChatGPT's composer.
@@ -29,6 +34,7 @@ export async function ensureThinkingTime(
   Runtime: ChromeClient["Runtime"],
   level: ThinkingTimeLevel,
   logger: BrowserLogger,
+  options: ThinkingTimeOptions = {},
 ) {
   const result = await evaluateThinkingTimeSelection(Runtime, level);
   const capitalizedLevel = level.charAt(0).toUpperCase() + level.slice(1);
@@ -44,6 +50,11 @@ export async function ensureThinkingTime(
     case "menu-not-found":
     case "option-not-found": {
       await logDomFailure(Runtime, logger, `thinking-${result.status}`);
+      if (options.required) {
+        throw new Error(
+          `Thinking time: ${result.status.replaceAll("-", " ")} (requested ${capitalizedLevel}, required).`,
+        );
+      }
       logger(
         `Thinking time: ${result.status.replaceAll("-", " ")} (requested ${capitalizedLevel}); continuing with ChatGPT default.`,
       );
@@ -120,6 +131,7 @@ function buildThinkingTimeExpression(level: ThinkingTimeLevel): string {
   const menuContainerLiteral = JSON.stringify(MENU_CONTAINER_SELECTOR);
   const menuItemLiteral = JSON.stringify(MENU_ITEM_SELECTOR);
   const modelButtonLiteral = JSON.stringify(MODEL_BUTTON_SELECTOR);
+  const composerSignalLiteral = JSON.stringify(COMPOSER_MODEL_SIGNAL_SELECTOR);
   const targetLevelLiteral = JSON.stringify(level.toLowerCase());
 
   return `(async () => {
@@ -128,6 +140,7 @@ function buildThinkingTimeExpression(level: ThinkingTimeLevel): string {
     const MENU_CONTAINER_SELECTOR = ${menuContainerLiteral};
     const MENU_ITEM_SELECTOR = ${menuItemLiteral};
     const MODEL_BUTTON_SELECTOR = ${modelButtonLiteral};
+    const COMPOSER_MODEL_SIGNAL_SELECTOR = ${composerSignalLiteral};
     const TARGET_LEVEL = ${targetLevelLiteral};
 
     // Bilingual matchers: English level token + observed Chinese variants.
@@ -153,6 +166,15 @@ function buildThinkingTimeExpression(level: ThinkingTimeLevel): string {
     const matchesLevel = (text) => {
       const t = normalize(text);
       return targetTokens.some((tok) => t.includes(String(tok).toLowerCase()));
+    };
+    const activeModelSignal = () => normalize([
+      document.querySelector(MODEL_BUTTON_SELECTOR)?.textContent ?? '',
+      document.querySelector(COMPOSER_MODEL_SIGNAL_SELECTOR)?.textContent ?? '',
+    ].join(' '));
+    const activeModelAlreadyImpliesTarget = () => {
+      const signal = activeModelSignal();
+      if (TARGET_LEVEL !== 'extended') return false;
+      return signal.includes('pro') && signal.includes('extended') && !signal.includes('thinking');
     };
     const optionIsSelected = (node) => {
       if (!(node instanceof HTMLElement)) return false;
@@ -210,6 +232,9 @@ function buildThinkingTimeExpression(level: ThinkingTimeLevel): string {
     };
 
     const oldChip = findOldChip();
+    if (activeModelAlreadyImpliesTarget()) {
+      return { status: 'already-selected', label: 'Pro Extended' };
+    }
     if (oldChip) {
       dispatchClickSequence(oldChip);
       const start = performance.now();
