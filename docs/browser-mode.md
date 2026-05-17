@@ -164,7 +164,7 @@ If ChatGPT initially exposes only `Called tool` / `Used tool`, Oracle treats tha
 
 Deep Research is browser-only. It does not use connected apps in v1; give it public-web scope, uploaded files, and any domain/source guidance in the prompt. For deep thinking over code or architecture without web search, prefer a normal browser run with a Pro/Thinking model and `--browser-thinking-time heavy`.
 
-Completed browser sessions also save durable artifacts under `~/.oracle/sessions/<id>/artifacts/`. Deep Research writes the extracted report to `deep-research-report.md`, and every browser run writes `transcript.md` with the prompt, final answer, conversation URL, and saved artifact references. Use `--write-output <path>` when you also need a copy of just the final answer at a specific path.
+Completed browser sessions also save durable artifacts under `~/.oracle/sessions/<id>/artifacts/`. Deep Research writes the extracted report to `deep-research-report.md`, every browser run writes `transcript.md` with the prompt, final answer, conversation URL, and saved artifact references, and ChatGPT browser runs write `chatgpt-rate-limit-log.json` with conversation-history request status metadata plus any detected history rate-limit modal. Use `--write-output <path>` when you also need a copy of just the final answer at a specific path.
 
 ### Conversation archiving
 

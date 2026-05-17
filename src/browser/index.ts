@@ -90,6 +90,7 @@ import {
   resolveBrowserArchiveDecision,
 } from "./actions/archiveConversation.js";
 import { describeBrowserControlPlan, formatBrowserControlPlan } from "./controlPlan.js";
+import { startChatGptRateLimitLogger } from "./rateLimitLogger.js";
 
 export type { BrowserAutomationConfig, BrowserRunOptions, BrowserRunResult } from "./types.js";
 export { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "./constants.js";
@@ -737,8 +738,17 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
   let connectionClosedUnexpectedly = false;
   let stopThinkingMonitor: (() => void) | null = null;
   let removeDialogHandler: (() => void) | null = null;
+  let rateLimitLogger: ReturnType<typeof startChatGptRateLimitLogger> | null = null;
   let appliedCookies = 0;
   let preserveBrowserOnError = false;
+  const finalizeRateLimitLogger = async () => {
+    if (!rateLimitLogger) {
+      return null;
+    }
+    const activeLogger = rateLimitLogger;
+    rateLimitLogger = null;
+    return saveOptionalArtifact(() => activeLogger.stopAndSave(), logger);
+  };
 
   try {
     try {
@@ -805,6 +815,12 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       domainEnablers.push(DOM.enable());
     }
     await Promise.all(domainEnablers);
+    rateLimitLogger = startChatGptRateLimitLogger(client, {
+      sessionId: options.sessionId,
+      logger,
+      targetId: isolatedTargetId ?? undefined,
+      getTargetUrl: () => lastUrl,
+    });
     removeDialogHandler = installJavaScriptDialogAutoDismissal(Page, logger);
     if (!manualLogin) {
       await Network.clearBrowserCookies();
@@ -1245,6 +1261,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           }),
         logger,
       );
+      const rateLimitLogArtifact = await finalizeRateLimitLogger();
       const transcriptArtifact = await saveOptionalArtifact(
         () =>
           saveBrowserTranscriptArtifact({
@@ -1252,12 +1269,16 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
             prompt: promptText,
             answerMarkdown: researchResult.text,
             conversationUrl: lastUrl,
-            artifacts: appendArtifacts(undefined, [reportArtifact]),
+            artifacts: appendArtifacts(undefined, [reportArtifact, rateLimitLogArtifact]),
             logger,
           }),
         logger,
       );
-      const savedArtifacts = appendArtifacts(undefined, [reportArtifact, transcriptArtifact]);
+      const savedArtifacts = appendArtifacts(undefined, [
+        reportArtifact,
+        rateLimitLogArtifact,
+        transcriptArtifact,
+      ]);
       const archive = await maybeArchiveCompletedConversation({
         Runtime,
         logger,
@@ -1705,6 +1726,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       answerMarkdown += imageArtifacts.markdownSuffix;
     }
     const savedImageArtifacts = appendArtifacts(undefined, imageArtifacts.savedImages);
+    const rateLimitLogArtifact = await finalizeRateLimitLogger();
     const transcriptArtifact = await saveOptionalArtifact(
       () =>
         saveBrowserTranscriptArtifact({
@@ -1712,12 +1734,15 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
           prompt: promptText,
           answerMarkdown,
           conversationUrl: lastUrl,
-          artifacts: savedImageArtifacts,
+          artifacts: appendArtifacts(savedImageArtifacts, [rateLimitLogArtifact]),
           logger,
         }),
       logger,
     );
-    const savedArtifacts = appendArtifacts(savedImageArtifacts, [transcriptArtifact]);
+    const savedArtifacts = appendArtifacts(savedImageArtifacts, [
+      rateLimitLogArtifact,
+      transcriptArtifact,
+    ]);
     const archive = await maybeArchiveCompletedConversation({
       Runtime,
       logger,
@@ -1819,6 +1844,7 @@ export async function runBrowserMode(options: BrowserRunOptions): Promise<Browse
       normalizedError,
     );
   } finally {
+    await finalizeRateLimitLogger().catch(() => null);
     try {
       if (!connectionClosedUnexpectedly) {
         await client?.close();
@@ -2293,9 +2319,18 @@ async function runRemoteBrowserMode(
   let runStatus: "attempted" | "complete" = "attempted";
   let stopThinkingMonitor: (() => void) | null = null;
   let removeDialogHandler: (() => void) | null = null;
+  let rateLimitLogger: ReturnType<typeof startChatGptRateLimitLogger> | null = null;
   let connection: Awaited<ReturnType<typeof connectToRemoteChrome>> | null = null;
   const browserWSEndpoint = config.remoteChromeBrowserWSEndpoint ?? undefined;
   const chromeProfileRoot = config.remoteChromeProfileRoot ?? undefined;
+  const finalizeRateLimitLogger = async () => {
+    if (!rateLimitLogger) {
+      return null;
+    }
+    const activeLogger = rateLimitLogger;
+    rateLimitLogger = null;
+    return saveOptionalArtifact(() => activeLogger.stopAndSave(), logger);
+  };
 
   try {
     const remoteLeaseProfileDir = config.browserTabRef
@@ -2353,6 +2388,12 @@ async function runRemoteBrowserMode(
       domainEnablers.push(DOM.enable());
     }
     await Promise.all(domainEnablers);
+    rateLimitLogger = startChatGptRateLimitLogger(client, {
+      sessionId: options.sessionId,
+      logger,
+      targetId: remoteTargetId ?? undefined,
+      getTargetUrl: () => lastUrl,
+    });
     removeDialogHandler = installJavaScriptDialogAutoDismissal(Page, logger);
 
     // Skip cookie sync for remote Chrome - it already has cookies
@@ -2568,6 +2609,7 @@ async function runRemoteBrowserMode(
           }),
         logger,
       );
+      const rateLimitLogArtifact = await finalizeRateLimitLogger();
       const transcriptArtifact = await saveOptionalArtifact(
         () =>
           saveBrowserTranscriptArtifact({
@@ -2575,12 +2617,16 @@ async function runRemoteBrowserMode(
             prompt: promptText,
             answerMarkdown: researchResult.text,
             conversationUrl: lastUrl,
-            artifacts: appendArtifacts(undefined, [reportArtifact]),
+            artifacts: appendArtifacts(undefined, [reportArtifact, rateLimitLogArtifact]),
             logger,
           }),
         logger,
       );
-      const savedArtifacts = appendArtifacts(undefined, [reportArtifact, transcriptArtifact]);
+      const savedArtifacts = appendArtifacts(undefined, [
+        reportArtifact,
+        rateLimitLogArtifact,
+        transcriptArtifact,
+      ]);
       const archive = await maybeArchiveCompletedConversation({
         Runtime,
         logger,
@@ -2988,6 +3034,7 @@ async function runRemoteBrowserMode(
       answerMarkdown += imageArtifacts.markdownSuffix;
     }
     const savedImageArtifacts = appendArtifacts(undefined, imageArtifacts.savedImages);
+    const rateLimitLogArtifact = await finalizeRateLimitLogger();
     const transcriptArtifact = await saveOptionalArtifact(
       () =>
         saveBrowserTranscriptArtifact({
@@ -2995,12 +3042,15 @@ async function runRemoteBrowserMode(
           prompt: promptText,
           answerMarkdown,
           conversationUrl: lastUrl,
-          artifacts: savedImageArtifacts,
+          artifacts: appendArtifacts(savedImageArtifacts, [rateLimitLogArtifact]),
           logger,
         }),
       logger,
     );
-    const savedArtifacts = appendArtifacts(savedImageArtifacts, [transcriptArtifact]);
+    const savedArtifacts = appendArtifacts(savedImageArtifacts, [
+      rateLimitLogArtifact,
+      transcriptArtifact,
+    ]);
     const archive = await maybeArchiveCompletedConversation({
       Runtime,
       logger,
@@ -3063,6 +3113,7 @@ async function runRemoteBrowserMode(
       },
     });
   } finally {
+    await finalizeRateLimitLogger().catch(() => null);
     try {
       await closeRemoteConnectionAfterRun({
         connectionClosedUnexpectedly,
