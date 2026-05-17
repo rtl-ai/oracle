@@ -6,6 +6,7 @@ npm-debug.log*
 .bun-check/
 dist/
 build/
+artifacts/
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 vendor/oracle-notifier/OracleNotifier.app

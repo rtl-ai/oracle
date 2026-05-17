@@ -44,6 +44,7 @@ oracle --followup <id> -p "Re-evaluate with this new context" --file "src/**/*.t
 - **Choosing a model.** The [Mythical Pro Agents](mythical-pro-agents.md) lineup covers when to reach for GPT-5.5 Pro vs. Gemini 3 Pro vs. Claude Opus, and what each costs.
 - **Wiring up an agent.** [Agents](agents.md) covers Claude Code, Codex, Cursor, and the `oracle` skill. [MCP](mcp.md) plugs Oracle into any MCP-aware client.
 - **Driving ChatGPT without keys.** [Browser mode](browser-mode.md) walks through manual-login profiles, attach-running, remote browsers, and Deep Research.
+- **Debugging ChatGPT history limits.** [Conversation history rate-limit modal](debug/chatgpt-conversation-history-rate-limit.md) explains the `Too many requests` popup, its `/backend-api/conversations` trigger, and safe verification steps.
 - **Long Pro runs.** [Sessions](sessions.md) and the [followup](followup.md) flow handle background runs, reattach, and lineage.
 
 ## Why "mythical pro agents"?
