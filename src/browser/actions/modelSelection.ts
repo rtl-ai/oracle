@@ -1,4 +1,5 @@
 import type { ChromeClient, BrowserLogger, BrowserModelStrategy } from "../types.js";
+import type { BrowserModelSelectionEvidence } from "../../sessionStore.js";
 import {
   COMPOSER_MODEL_SIGNAL_SELECTOR,
   MENU_CONTAINER_SELECTOR,
@@ -8,12 +9,15 @@ import {
 import { logDomFailure } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
 
+const LEGACY_PRO_VERSION_WORD_TOKENS = ["5 4", "5 2", "5 1", "5 0", "gpt 5 pro"] as const;
+const LEGACY_PRO_VERSION_COMPACT_TOKENS = ["gpt54", "gpt52", "gpt51", "gpt50"] as const;
+
 export async function ensureModelSelection(
   Runtime: ChromeClient["Runtime"],
   desiredModel: string,
   logger: BrowserLogger,
   strategy: BrowserModelStrategy = "select",
-) {
+): Promise<BrowserModelSelectionEvidence> {
   const outcome = await Runtime.evaluate({
     expression: buildModelSelectionExpression(desiredModel, strategy),
     awaitPromise: true,
@@ -40,7 +44,15 @@ export async function ensureModelSelection(
         assertResolvedModelSelection(desiredModel, label);
       }
       logger(`Model picker: ${label}`);
-      return;
+      return {
+        requestedModel: desiredModel,
+        resolvedLabel: label,
+        strategy,
+        status: result.status,
+        verified: strategy !== "current",
+        source: "chatgpt-model-picker",
+        capturedAt: new Date().toISOString(),
+      };
     }
     case "option-not-found": {
       await logDomFailure(Runtime, logger, "model-switcher-option");
@@ -49,7 +61,7 @@ export async function ensureModelSelection(
       const availableHint = available.length > 0 ? ` Available: ${available.join(", ")}.` : "";
       const tempHint =
         isTemporary && /\bpro\b/i.test(desiredModel)
-          ? ' You are in Temporary Chat mode; Pro models are not available there. Remove "temporary-chat=true" from --chatgpt-url or use a non-Pro model (e.g. gpt-5.2).'
+          ? " You are in Temporary Chat mode; model labels may differ there. If the current Temporary Chat already shows the desired Pro mode, retry with --browser-model-strategy current; otherwise choose an available model or turn Temporary Chat off."
           : "";
       throw new Error(
         `Unable to find model option matching "${desiredModel}" in the model switcher.${availableHint}${tempHint}`,
@@ -66,6 +78,8 @@ function assertResolvedModelSelection(desiredModel: string, resolvedLabel: strin
   const desired = desiredModel.toLowerCase();
   const resolved = resolvedLabel.toLowerCase();
   const wantsGpt55Pro =
+    desired === "pro" ||
+    desired === "chatgpt pro" ||
     desired === "gpt-5.5-pro" ||
     desired.includes("5.5 pro") ||
     desired.includes("5-5 pro") ||
@@ -73,18 +87,34 @@ function assertResolvedModelSelection(desiredModel: string, resolvedLabel: strin
   if (!wantsGpt55Pro || !resolved) {
     return;
   }
-  const hasProSignal =
-    resolved.includes(" pro") ||
-    resolved.endsWith("pro") ||
-    resolved.includes("pro ") ||
-    resolved.includes("extended") ||
-    resolved.includes("gpt-5.5-pro") ||
-    resolved.includes("gpt 5 5 pro");
-  if (!hasProSignal || (resolved.includes("thinking") && !resolved.includes("pro"))) {
+  if (
+    !hasCurrentProSignal(resolved) ||
+    hasLegacyProVersionLabel(resolved) ||
+    resolved.includes("thinking")
+  ) {
     throw new Error(
-      `Model picker selected "${resolvedLabel}" while "${desiredModel}" requires GPT-5.5 Pro Extended. Use model "gpt-5.5" with browser thinking time "heavy" for Thinking Heavy.`,
+      `Model picker selected "${resolvedLabel}" while "${desiredModel}" requires GPT-5.5 Pro. Use model "gpt-5.5" with browser thinking time for the Thinking variant.`,
     );
   }
+}
+
+function normalizeResolvedModelLabel(value: string): string {
+  return value
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasCurrentProSignal(resolved: string): boolean {
+  return normalizeResolvedModelLabel(resolved).split(" ").includes("pro");
+}
+
+function hasLegacyProVersionLabel(resolved: string): boolean {
+  const normalized = normalizeResolvedModelLabel(resolved);
+  return (
+    LEGACY_PRO_VERSION_WORD_TOKENS.some((token) => normalized.includes(token)) ||
+    LEGACY_PRO_VERSION_COMPACT_TOKENS.some((token) => resolved.includes(token))
+  );
 }
 
 export function assertResolvedModelSelectionForTest(
@@ -140,6 +170,7 @@ function buildModelSelectionExpression(
         .replace(/\\s+/g, ' ')
         .trim();
     };
+    const hasToken = (value, token) => normalizeText(value).split(' ').includes(token);
     // Normalize every candidate token to keep fuzzy matching deterministic.
     const normalizedTarget = normalizeText(PRIMARY_LABEL);
     const normalizedTokens = Array.from(new Set([normalizedTarget, ...LABEL_TOKENS]))
@@ -160,19 +191,42 @@ function buildModelSelectionExpression(
     const wantsPro = normalizedTarget.includes(' pro') || normalizedTarget.endsWith(' pro') || normalizedTokens.includes('pro');
     const wantsInstant = normalizedTarget.includes('instant');
     const wantsThinking = normalizedTarget.includes('thinking');
+    const targetUsesCurrentGpt55Alias =
+      desiredVersion === '5-5' || normalizedTarget === 'pro' || normalizedTarget === 'chatgpt pro';
+    const labelHasProWord = (label) => label === 'pro' || label.startsWith('pro ') || label.includes(' pro ') || label.endsWith(' pro');
+    const legacyProVersionTokens = ['5 4', '5 2', '5 1', '5 0', 'gpt54', 'gpt52', 'gpt51', 'gpt50', 'gpt 5 pro'];
+    const labelHasLegacyProVersion = (value) => {
+      const label = normalizeText(value);
+      return legacyProVersionTokens.some((token) => label.includes(token));
+    };
     const isTargetGpt55VisibleAlias = (value) => {
-      if (desiredVersion !== '5-5') return false;
+      if (!targetUsesCurrentGpt55Alias) return false;
       const label = normalizeText(value);
       if (wantsPro) {
-        return label.includes('pro') && !label.includes('thinking');
+        // ChatGPT UI as of 2026-05: the picker shows just "Pro" (no longer "Pro Extended").
+        // "Extended" is now a thinking-effort sub-setting, not part of the model label.
+        // Accept bare "pro", legacy "pro extended", and reversed "extended pro" (composer pill).
+        return (label === 'pro' || label === 'pro extended' || label === 'extended pro') && !label.includes('thinking');
       }
       if (wantsThinking) {
-        return label.includes('thinking') && label.includes('heavy') && !label.includes('pro');
+        // ChatGPT UI as of 2026-05: the picker shows "Thinking" or "Thinking · Extended"
+        // (normalized to "thinking extended"). Accept both old "thinking heavy" and new labels.
+        return (label === 'thinking' || label === 'thinking extended' || label === 'thinking heavy') && !label.includes('pro');
       }
       return false;
     };
     const hasProComposerPill = () => Boolean(
-      document.querySelector('button.__composer-pill, button[aria-label="Pro, click to remove"]')
+      Array.from(document.querySelectorAll('button.__composer-pill, button[aria-label]'))
+        .filter((node) => {
+          const label = normalizeText(node.getAttribute?.('aria-label') ?? '');
+          return node.matches?.('button.__composer-pill') || label.includes('click to remove');
+        })
+        .some((node) => {
+          const label = normalizeText(
+            (node.getAttribute?.('aria-label') ?? '') + ' ' + (node.textContent ?? '')
+          );
+          return hasToken(label, 'pro') && !hasToken(label, 'thinking');
+        })
     );
 
     const button = document.querySelector(BUTTON_SELECTOR);
@@ -208,7 +262,9 @@ function buildModelSelectionExpression(
       const resolved = label || '';
       if (!wantsPro || !hasProComposerPill()) return resolved;
       const normalized = normalizeText(resolved);
-      if (!normalized || normalized.includes('pro')) return resolved;
+      if (!normalized) return resolved;
+      if (normalized.includes('thinking')) return 'Pro';
+      if (normalized.includes('pro')) return resolved;
       return resolved + ' + Pro';
     };
     const getResolvedLabel = (fallback) =>
@@ -224,7 +280,15 @@ function buildModelSelectionExpression(
       const normalizedLabel = normalizeText(getButtonLabel());
       if (!normalizedLabel) return false;
       if (isTargetGpt55VisibleAlias(normalizedLabel)) return true;
-      if (wantsPro && normalizedLabel === 'chatgpt' && hasProComposerPill()) {
+      if (
+        wantsPro &&
+        hasProComposerPill() &&
+        (normalizedLabel === 'chatgpt' ||
+          normalizedLabel === 'extended' ||
+          normalizedLabel === 'standard' ||
+          normalizedLabel === 'heavy' ||
+          normalizedLabel === 'light')
+      ) {
         return true;
       }
       if (desiredVersion) {
@@ -234,7 +298,8 @@ function buildModelSelectionExpression(
         if (desiredVersion === '5-1' && !normalizedLabel.includes('5 1')) return false;
         if (desiredVersion === '5-0' && !normalizedLabel.includes('5 0')) return false;
       }
-      if (wantsPro && !normalizedLabel.includes(' pro')) return false;
+      if (wantsPro && labelHasLegacyProVersion(normalizedLabel)) return false;
+      if (wantsPro && !labelHasProWord(normalizedLabel)) return false;
       if (wantsInstant && !normalizedLabel.includes('instant')) return false;
       if (wantsThinking && !normalizedLabel.includes('thinking')) return false;
       // Also reject if button has variants we DON'T want
@@ -251,6 +316,9 @@ function buildModelSelectionExpression(
       const signal = readComposerModelSignal();
       if (!signal) {
         return COMPOSER_SIGNAL_ALLOW_BLANK;
+      }
+      if (wantsPro && labelHasLegacyProVersion(signal)) {
+        return false;
       }
       if (COMPOSER_SIGNAL_EXCLUDES.some((token) => token && signal.includes(token))) {
         return false;
@@ -390,15 +458,14 @@ function buildModelSelectionExpression(
       const candidateGpt55VisibleAlias = isTargetGpt55VisibleAlias(normalizedText);
       const candidateHasThinking =
         normalizedText.includes('thinking') || normalizedTestId.includes('thinking');
+      const candidateHasLegacyProVersion = labelHasLegacyProVersion(normalizedText);
       const candidateHasPro =
         candidateGpt55VisibleAlias ||
-        normalizedText === 'pro' ||
-        normalizedText.startsWith('pro ') ||
-        normalizedText.includes(' pro ') ||
-        normalizedText.endsWith(' pro') ||
+        labelHasProWord(normalizedText) ||
         normalizedText.includes('proresearch') ||
         normalizedTestId.includes('pro');
       if (wantsPro && candidateHasThinking) return 0;
+      if (wantsPro && candidateHasLegacyProVersion) return 0;
       if (wantsPro && !candidateHasPro) return 0;
       if (wantsThinking && candidateHasPro) return 0;
       if (desiredVersion === '5-5' && normalizedText && !candidateGpt55VisibleAlias) {
@@ -441,10 +508,10 @@ function buildModelSelectionExpression(
       }
       // If the caller didn't explicitly ask for Pro, prefer non-Pro options when both exist.
       if (wantsPro) {
-        if (!normalizedText.includes(' pro')) {
+        if (!labelHasProWord(normalizedText)) {
           score -= 80;
         }
-      } else if (normalizedText.includes(' pro')) {
+      } else if (labelHasProWord(normalizedText)) {
         score -= 40;
       }
       // Similarly for Thinking variant

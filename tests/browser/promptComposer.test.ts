@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   __test__ as promptComposer,
   clearPromptComposer,
+  submitPrompt,
 } from "../../src/browser/actions/promptComposer.js";
 
 describe("promptComposer", () => {
@@ -111,10 +112,73 @@ describe("promptComposer", () => {
         ["oracle-attach-verify.txt"],
       );
       const assertion = expect(promise).rejects.toThrow(/clickable send button/i);
-      await vi.advanceTimersByTimeAsync(21_000);
+      // Deadline is 45_000ms; advance a bit past it so the timeout fires.
+      await vi.advanceTimersByTimeAsync(46_000);
       await assertion;
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("only attachment sends get the longer send-button deadline", () => {
+    expect(promptComposer.sendButtonTimeoutMs()).toBe(20_000);
+    expect(promptComposer.sendButtonTimeoutMs([])).toBe(20_000);
+    expect(promptComposer.sendButtonTimeoutMs(["oracle-attach-verify.txt"])).toBe(45_000);
+  });
+
+  test("marks prompt submitted before commit verification finishes", async () => {
+    const onPromptSubmitted = vi.fn();
+    const runtime = {
+      evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+        if (expression.includes("document.readyState")) {
+          return { result: { value: { ready: true, composer: true, fileInput: false } } };
+        }
+        if (expression.includes("focused: true")) {
+          return { result: { value: { focused: true } } };
+        }
+        if (expression.includes("editorText")) {
+          return {
+            result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
+          };
+        }
+        if (expression.includes("status: 'ready'")) {
+          return { result: { value: { status: "ready" } } };
+        }
+        if (expression.includes("dispatchClickSequence(button)")) {
+          return { result: { value: true } };
+        }
+        return {
+          result: {
+            value: {
+              baseline: 0,
+              turnsCount: 1,
+              userMatched: true,
+              prefixMatched: false,
+              lastMatched: true,
+              hasNewTurn: true,
+              stopVisible: true,
+              assistantVisible: false,
+              composerCleared: true,
+              inConversation: true,
+            },
+          },
+        };
+      }),
+    };
+    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = Object.assign(vi.fn(), { verbose: false });
+
+    await submitPrompt(
+      {
+        runtime: runtime as never,
+        input: input as never,
+        baselineTurns: 0,
+        onPromptSubmitted,
+      },
+      "hello",
+      logger as never,
+    );
+
+    expect(onPromptSubmitted).toHaveBeenCalledTimes(1);
   });
 });

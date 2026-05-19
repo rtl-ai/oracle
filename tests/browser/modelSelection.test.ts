@@ -11,6 +11,190 @@ const expectContains = (arr: string[], value: string) => {
   expect(arr).toContain(value);
 };
 
+const evaluateImmediateModelSelectionExpression = (
+  targetModel: string,
+  buttonLabel: string,
+  composerLabel = "",
+  proPillLabel = "",
+): unknown => {
+  const expression = buildModelSelectionExpressionForTest(targetModel);
+  const modelButton = { textContent: buttonLabel };
+  const composerSignal = composerLabel ? { textContent: composerLabel } : null;
+  const proPill = proPillLabel
+    ? {
+        textContent: proPillLabel,
+        getAttribute: (name: string) => (name === "aria-label" ? proPillLabel : null),
+        matches: (selector: string) => selector.includes("__composer-pill"),
+      }
+    : null;
+  const documentStub = {
+    querySelector: (selector: string) => {
+      if (selector.includes("model-switcher-dropdown-button")) {
+        return modelButton;
+      }
+      if (selector.includes("__composer-pill") || selector.includes("Pro, click to remove")) {
+        return null;
+      }
+      if (selector.includes("composer")) {
+        return composerSignal;
+      }
+      return null;
+    },
+    querySelectorAll: () => (proPill ? [proPill] : []),
+    title: "",
+    body: { innerText: "" },
+  };
+  const performanceStub = { now: () => 0 };
+  const windowStub = { location: { href: "https://chatgpt.com/" } };
+  const EventTargetStub = class {};
+  const MouseEventStub = class {};
+  const evaluate = new Function(
+    "document",
+    "performance",
+    "setTimeout",
+    "window",
+    "EventTarget",
+    "MouseEvent",
+    `return ${expression};`,
+  ) as (
+    document: unknown,
+    performance: unknown,
+    setTimeout: unknown,
+    window: unknown,
+    EventTarget: unknown,
+    MouseEvent: unknown,
+  ) => unknown;
+
+  return evaluate(
+    documentStub,
+    performanceStub,
+    () => 0,
+    windowStub,
+    EventTargetStub,
+    MouseEventStub,
+  );
+};
+
+const evaluateMenuModelSelectionExpression = async (
+  targetModel: string,
+  option: { label: string; testId: string },
+): Promise<unknown> => {
+  class FakeEventTarget {
+    dispatchEvent(_event: unknown): boolean {
+      return true;
+    }
+  }
+
+  class FakeElement extends FakeEventTarget {
+    constructor(
+      public textContent: string,
+      private readonly attributes: Readonly<Record<string, string>> = {},
+      private readonly children: readonly FakeElement[] = [],
+      private readonly onDispatch?: () => void,
+    ) {
+      super();
+    }
+
+    getAttribute(name: string): string | null {
+      return this.attributes[name] ?? null;
+    }
+
+    querySelector(_selector: string): FakeElement | null {
+      return null;
+    }
+
+    querySelectorAll(_selector: string): FakeElement[] {
+      return [...this.children];
+    }
+
+    closest(_selector: string): FakeElement | null {
+      return null;
+    }
+
+    override dispatchEvent(event: unknown): boolean {
+      this.onDispatch?.();
+      return super.dispatchEvent(event);
+    }
+  }
+
+  class FakeMouseEvent {
+    readonly type: string;
+    readonly init?: unknown;
+
+    constructor(type: string, init?: unknown) {
+      this.type = type;
+      this.init = init;
+    }
+  }
+
+  const expression = buildModelSelectionExpressionForTest(targetModel);
+  const modelButton = new FakeElement("ChatGPT", {
+    "data-testid": "model-switcher-dropdown-button",
+  });
+  const modelOption = new FakeElement(option.label, { "data-testid": option.testId }, [], () => {
+    modelButton.textContent = option.label;
+  });
+  const menu = new FakeElement("", { role: "menu" }, [modelOption]);
+  const documentStub = {
+    querySelector: (selector: string) => {
+      if (selector.includes("model-switcher-dropdown-button")) {
+        return modelButton;
+      }
+      if (selector.includes('role="menu"') || selector.includes("data-radix")) {
+        return menu;
+      }
+      return null;
+    },
+    querySelectorAll: (selector: string) => {
+      if (selector.includes('role="menu"') || selector.includes("data-radix")) {
+        return [menu];
+      }
+      return [];
+    },
+    title: "",
+    body: { innerText: "" },
+    dispatchEvent: () => true,
+  };
+  const performanceStub = { now: () => 0 };
+  const windowStub = { location: { href: "https://chatgpt.com/" } };
+  const immediateSetTimeout = (handler: TimerHandler): number => {
+    if (typeof handler === "function") {
+      handler();
+    }
+    return 0;
+  };
+  const evaluate = new Function(
+    "document",
+    "performance",
+    "setTimeout",
+    "window",
+    "EventTarget",
+    "MouseEvent",
+    "HTMLElement",
+    `return ${expression};`,
+  ) as (
+    document: unknown,
+    performance: unknown,
+    setTimeout: unknown,
+    window: unknown,
+    EventTarget: unknown,
+    MouseEvent: unknown,
+    HTMLElement: unknown,
+  ) => unknown;
+
+  return await Promise.resolve(
+    evaluate(
+      documentStub,
+      performanceStub,
+      immediateSetTimeout,
+      windowStub,
+      FakeEventTarget,
+      FakeMouseEvent,
+      FakeElement,
+    ),
+  );
+};
+
 describe("browser model selection matchers", () => {
   it("includes pro + 5.5 tokens for gpt-5.5-pro", () => {
     const { labelTokens, testIdTokens } = buildModelMatchersLiteralForTest("gpt-5.5-pro");
@@ -86,8 +270,36 @@ describe("browser model selection matchers", () => {
   it("recognizes current GPT-5.5 visible aliases in the picker expression", () => {
     const expression = buildModelSelectionExpressionForTest("gpt-5.5-pro");
     expect(expression).toContain("isTargetGpt55VisibleAlias");
-    expect(expression).toContain("label.includes('pro') && !label.includes('thinking')");
+    // ChatGPT as of 2026-05 shows bare "Pro" (not "Pro Extended") in the picker.
+    // Composer pill may also display "Extended Pro" (reversed ordering).
+    expect(expression).toContain(
+      "label === 'pro' || label === 'pro extended' || label === 'extended pro'",
+    );
     expect(expression).toContain("desiredVersion === '5-5'");
+  });
+
+  it("recognizes bare Pro as already selected when Pro is the browser target", () => {
+    const result = evaluateImmediateModelSelectionExpression("Pro", "Pro");
+    expect(result).toEqual({ status: "already-selected", label: "Pro" });
+  });
+
+  it("does not accept stale versioned Pro labels for the current Pro target", () => {
+    const result = evaluateImmediateModelSelectionExpression("Pro", "GPT-5.4 Pro");
+    expect(result).toBeInstanceOf(Promise);
+  });
+
+  it("does not accept stale versioned Pro composer signals under a generic header", () => {
+    const result = evaluateImmediateModelSelectionExpression("Pro", "ChatGPT", "GPT-5.4 Pro");
+    expect(result).toBeInstanceOf(Promise);
+  });
+
+  it("selects the current bare Pro row even when its test id still looks legacy", async () => {
+    await expect(
+      evaluateMenuModelSelectionExpression("Pro", {
+        label: "Pro",
+        testId: "model-switcher-gpt-5-pro",
+      }),
+    ).resolves.toEqual({ status: "switched", label: "Pro" });
   });
 
   it("recognizes ChatGPT plus the Pro composer pill as the current Pro model", () => {
@@ -95,7 +307,31 @@ describe("browser model selection matchers", () => {
     expect(expression).toContain("const hasProComposerPill = () =>");
     expect(expression).toContain("const withProPillSignal = (label) =>");
     expect(expression).toContain("return resolved + ' + Pro'");
-    expect(expression).toContain("normalizedLabel === 'chatgpt' && hasProComposerPill()");
+    expect(expression).toContain("if (normalized.includes('thinking')) return 'Pro'");
+    expect(expression).toContain("normalizedLabel === 'extended'");
+    expect(expression).toContain("hasToken(label, 'pro') && !hasToken(label, 'thinking')");
+    expect(expression).not.toContain('button[aria-label*="Pro"]');
+    expect(expression).toContain("hasProComposerPill()");
+  });
+
+  it("does not let a standalone thinking chip pollute Pro model verification", () => {
+    const result = evaluateImmediateModelSelectionExpression(
+      "gpt-5.5-pro",
+      "ChatGPT",
+      "Thinking Extended",
+      "Pro, click to remove",
+    );
+    expect(result).toEqual({ status: "already-selected", label: "Pro" });
+  });
+
+  it("accepts a Pro pill plus effort label as the current Pro model", () => {
+    const result = evaluateImmediateModelSelectionExpression(
+      "gpt-5.5-pro",
+      "Extended",
+      "",
+      "Pro, click to remove",
+    );
+    expect(result).toEqual({ status: "already-selected", label: "Extended + Pro" });
   });
 
   it("hard-rejects Thinking candidates when targeting Pro", () => {
@@ -122,18 +358,36 @@ describe("browser model selection matchers", () => {
     );
   });
 
-  it("fails loudly if post-selection state resolves to Thinking instead of Pro Extended", () => {
+  it("fails loudly if post-selection state resolves to Thinking instead of Pro", () => {
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Thinking 5.5 Heavy")).toThrow(
-      /requires GPT-5.5 Pro Extended/,
+      /requires GPT-5.5 Pro/,
     );
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "GPT-5.5")).toThrow(
-      /requires GPT-5.5 Pro Extended/,
+      /requires GPT-5.5 Pro/,
+    );
+    expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Extended")).toThrow(
+      /requires GPT-5.5 Pro/,
+    );
+    expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Thinking Extended")).toThrow(
+      /requires GPT-5.5 Pro/,
+    );
+    expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Thinking Pro")).toThrow(
+      /requires GPT-5.5 Pro/,
     );
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "ChatGPT")).toThrow(
-      /requires GPT-5.5 Pro Extended/,
+      /requires GPT-5.5 Pro/,
     );
+    // Both the new bare "Pro" label and the legacy "GPT-5.5 Pro" should pass.
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Pro")).not.toThrow();
     expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "GPT-5.5 Pro")).not.toThrow();
+    expect(() => assertResolvedModelSelectionForTest("gpt-5.5-pro", "Extended Pro")).not.toThrow();
+    expect(() => assertResolvedModelSelectionForTest("Pro", "Thinking 5.5 Heavy")).toThrow(
+      /requires GPT-5.5 Pro/,
+    );
+    expect(() => assertResolvedModelSelectionForTest("Pro", "GPT-5.4 Pro")).toThrow(
+      /requires GPT-5.5 Pro/,
+    );
+    expect(() => assertResolvedModelSelectionForTest("Pro", "Pro")).not.toThrow();
   });
 
   it("does not validate the active picker label when strategy keeps current selection", async () => {
@@ -146,7 +400,13 @@ describe("browser model selection matchers", () => {
 
     await expect(
       ensureModelSelection(runtime as never, "gpt-5.5-pro", logger as never, "current"),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      requestedModel: "gpt-5.5-pro",
+      resolvedLabel: "Thinking 5.5 Heavy",
+      status: "already-selected",
+      strategy: "current",
+      verified: false,
+    });
     expect(logger).toHaveBeenCalledWith("Model picker: Thinking 5.5 Heavy");
   });
 

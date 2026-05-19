@@ -1,15 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { BrowserSessionConfig } from "../sessionStore.js";
-import type { ModelName, ThinkingTimeLevel } from "../oracle.js";
-import {
-  CHATGPT_URL,
-  DEFAULT_MODEL_STRATEGY,
-  DEFAULT_MODEL_TARGET,
-  isTemporaryChatUrl,
-  normalizeChatgptUrl,
-  parseDuration,
-} from "../browserMode.js";
+import type { ModelName, ThinkingTimeLevel } from "../oracle/types.js";
+import { CHATGPT_URL, DEFAULT_MODEL_STRATEGY, DEFAULT_MODEL_TARGET } from "../browser/constants.js";
+import { normalizeChatgptUrl } from "../browser/utils.js";
+import { parseDuration } from "../duration.js";
 import { normalizeBrowserModelStrategy } from "../browser/modelStrategy.js";
 import type {
   BrowserAgentMode,
@@ -30,14 +25,14 @@ const DEFAULT_CHROME_PROFILE = "Default";
 // The browser label is passed to the model picker which fuzzy-matches against ChatGPT's UI.
 const BROWSER_MODEL_LABELS: [ModelName, string][] = [
   // Most specific first (e.g., "gpt-5.2-thinking" before "gpt-5.2")
-  ["gpt-5.5-pro", "GPT-5.5 Pro"],
+  ["gpt-5.5-pro", "Pro"],
   ["gpt-5.5", "Thinking 5.5"],
-  ["gpt-5.4-pro", "GPT-5.4 Pro"],
+  ["gpt-5.4-pro", "Pro"],
   ["gpt-5.2-thinking", "GPT-5.2 Thinking"],
   ["gpt-5.2-instant", "GPT-5.2 Instant"],
-  ["gpt-5.2-pro", "GPT-5.5 Pro"],
-  ["gpt-5.1-pro", "GPT-5.5 Pro"],
-  ["gpt-5-pro", "GPT-5.5 Pro"],
+  ["gpt-5.2-pro", "Pro"],
+  ["gpt-5.1-pro", "Pro"],
+  ["gpt-5-pro", "Pro"],
   // Base models last (least specific)
   ["gpt-5.4", "Thinking 5.4"],
   ["gpt-5.2", "GPT-5.2"], // Selects "Auto" in ChatGPT UI
@@ -98,17 +93,17 @@ export function normalizeChatGptModelForBrowser(model: ModelName): ModelName {
     return model;
   }
 
-  if (
-    normalized === "gpt-5.5-pro" ||
-    normalized === "gpt-5.5" ||
-    normalized === "gpt-5.4-pro" ||
-    normalized === "gpt-5.4"
-  ) {
+  if (normalized === "gpt-5.5-pro" || normalized === "gpt-5.5" || normalized === "gpt-5.4") {
     return normalized;
   }
 
   // Pro variants: resolve to the latest Pro model in ChatGPT.
-  if (normalized === "gpt-5-pro" || normalized === "gpt-5.1-pro" || normalized === "gpt-5.2-pro") {
+  if (
+    normalized === "gpt-5-pro" ||
+    normalized === "gpt-5.1-pro" ||
+    normalized === "gpt-5.2-pro" ||
+    normalized === "gpt-5.4-pro"
+  ) {
     return "gpt-5.5-pro";
   }
 
@@ -171,18 +166,6 @@ export async function buildBrowserConfig(
     : shouldUseOverride
       ? desiredModelOverride
       : mapModelToBrowserLabel(options.model);
-
-  if (
-    modelStrategy === "select" &&
-    url &&
-    isTemporaryChatUrl(url) &&
-    /\bpro\b/i.test(desiredModel ?? "")
-  ) {
-    throw new Error(
-      "Temporary Chat mode does not expose Pro models in the ChatGPT model picker. " +
-        'Remove "temporary-chat=true" from --chatgpt-url (or omit --chatgpt-url), or use a non-Pro model (e.g. --model gpt-5.2).',
-    );
-  }
 
   return {
     chromeProfile: options.browserChromeProfile ?? DEFAULT_CHROME_PROFILE,

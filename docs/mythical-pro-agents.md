@@ -98,7 +98,7 @@ Pro / Thinking models in browser mode accept a `--browser-thinking-time` knob:
 | ---------- | -------------------------------- |
 | `light`    | Quick                            |
 | `standard` | Default                          |
-| `extended` | Pro Extended / Extended thinking |
+| `extended` | Pro Extended / Thinking Extended |
 | `heavy`    | Thinking Heavy                   |
 
 ```bash

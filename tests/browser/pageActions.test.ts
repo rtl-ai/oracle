@@ -10,6 +10,7 @@ import {
   ensureNotBlocked,
   ensureLoggedIn,
 } from "../../src/browser/pageActions.js";
+import { buildLoginProbeExpressionForTest } from "../../src/browser/actions/navigation.js";
 import * as attachments from "../../src/browser/actions/attachments.js";
 import * as attachmentDataTransfer from "../../src/browser/actions/attachmentDataTransfer.js";
 import type { ChromeClient } from "../../src/browser/types.js";
@@ -28,7 +29,13 @@ describe("ensureModelSelection", () => {
         result: { value: { status: "already-selected", label: "GPT-5.2 Pro" } },
       }),
     } as unknown as ChromeClient["Runtime"];
-    await expect(ensureModelSelection(runtime, "GPT-5.2 Pro", logger)).resolves.toBeUndefined();
+    await expect(ensureModelSelection(runtime, "GPT-5.2 Pro", logger)).resolves.toMatchObject({
+      requestedModel: "GPT-5.2 Pro",
+      resolvedLabel: "GPT-5.2 Pro",
+      status: "already-selected",
+      strategy: "select",
+      verified: true,
+    });
     expect(logger).toHaveBeenCalledWith("Model picker: GPT-5.2 Pro");
   });
 
@@ -41,7 +48,7 @@ describe("ensureModelSelection", () => {
     );
   });
 
-  test("includes temporary chat hint when Pro is unavailable", async () => {
+  test("includes temporary chat hint when requested Pro option is missing", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({
         result: {
@@ -53,7 +60,7 @@ describe("ensureModelSelection", () => {
       }),
     } as unknown as ChromeClient["Runtime"];
     await expect(ensureModelSelection(runtime, "GPT-5.2 Pro", logger)).rejects.toThrow(
-      /Temporary Chat/i,
+      /model labels may differ/i,
     );
   });
 
@@ -201,6 +208,43 @@ describe("ensureNotBlocked", () => {
 });
 
 describe("ensureLoggedIn", () => {
+  async function runLoginProbeForLabels(labels: string[], fetchStatus = 200) {
+    class FakeHTMLElement {
+      constructor(public textContent: string) {}
+
+      getAttribute() {
+        return "";
+      }
+
+      getBoundingClientRect() {
+        return { width: 120, height: 32 };
+      }
+    }
+
+    const nodes = labels.map((label) => new FakeHTMLElement(label));
+    const document = { querySelectorAll: vi.fn(() => nodes) };
+    const window = { getComputedStyle: vi.fn(() => ({ display: "block", visibility: "visible" })) };
+    const fetch = vi.fn().mockResolvedValue({ status: fetchStatus });
+    const location = { href: "https://chatgpt.com/", pathname: "/" };
+    const expression = buildLoginProbeExpressionForTest(0);
+    const evaluate = new Function(
+      "document",
+      "window",
+      "HTMLElement",
+      "fetch",
+      "location",
+      `return ${expression};`,
+    ) as (
+      document: unknown,
+      window: unknown,
+      HTMLElement: typeof FakeHTMLElement,
+      fetch: unknown,
+      location: unknown,
+    ) => Promise<{ ok: boolean; domLoginCta: boolean; status: number }>;
+
+    return evaluate(document, window, FakeHTMLElement, fetch, location);
+  }
+
   test("logs success when session is present", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({
@@ -209,6 +253,25 @@ describe("ensureLoggedIn", () => {
     } as unknown as ChromeClient["Runtime"];
     await expect(ensureLoggedIn(runtime, logger, { appliedCookies: 2 })).resolves.toBeUndefined();
     expect(logger).toHaveBeenCalledWith(expect.stringContaining("Login check passed"));
+  });
+
+  test("does not treat history items starting with login as login CTAs", async () => {
+    await expect(runLoginProbeForLabels(["Login setup instruction"])).resolves.toMatchObject({
+      ok: true,
+      domLoginCta: false,
+      status: 200,
+    });
+  });
+
+  test("still detects exact and provider login CTAs", async () => {
+    await expect(runLoginProbeForLabels(["Log in"])).resolves.toMatchObject({
+      ok: false,
+      domLoginCta: true,
+    });
+    await expect(runLoginProbeForLabels(["Continue with Google"])).resolves.toMatchObject({
+      ok: false,
+      domLoginCta: true,
+    });
   });
 
   test("throws with cookie guidance when cookies missing", async () => {

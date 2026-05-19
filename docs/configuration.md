@@ -120,8 +120,9 @@ oracle \
 
 ## API timeouts
 
-- `--timeout <seconds|auto>` controls the overall API deadline for a run.
-- `--http-timeout <ms|s|m|h>` overrides the HTTP client timeout for API requests (default 20m).
+- `--timeout <seconds|duration|auto>` controls the overall API deadline for a run. Bare numbers are seconds; duration values such as `10m` and `2h` are supported.
+- `--http-timeout <ms|s|m|h>` overrides the HTTP client timeout for API requests. If omitted, explicit `--timeout` values are reused for transport.
+- Explicit `--timeout` values also set the stale-session cutoff unless `--zombie-timeout` is provided.
 - Defaults: `auto` = 60 m for Pro models; non-pro API models use `120s` if you don’t set a value.
 - Heartbeat messages print the live remaining time so you can see when the client-side deadline will fire.
 
@@ -129,3 +130,13 @@ oracle \
 
 - `--zombie-timeout <ms|s|m|h>` overrides the stale-session cutoff used by `oracle status`.
 - `--zombie-last-activity` uses last log activity instead of start time to detect stale sessions.
+
+## Performance traces
+
+- `--perf-trace` writes a JSON timing trace with startup, first output, root command, and exit marks.
+- `--perf-trace-path /tmp/oracle.json` or `--perf-trace=/tmp/oracle.json` writes to an explicit path.
+- `ORACLE_PERF_TRACE=1` writes `.oracle-perf-<timestamp>-<pid>.json` in the current directory.
+- `ORACLE_PERF_TRACE=/tmp/oracle.json` writes to an explicit path.
+- Trace args are secret-safe: prompt text, tokens, cookie payloads, inline cookies, and API key-like values are redacted.
+- Detached API runs write a session-suffixed child trace beside the requested trace path so startup and background execution can be inspected separately.
+- Useful events: `cli-module-ready`, `pre-action`, `root-command-start`, `first-output`, `command-action-complete`, and `exit`.
