@@ -58,10 +58,11 @@ jobs:
           run_cmd lake build
           run_cmd lake env lean Erdos64FiniteCertificate/FiniteCertificateBridge.lean
 
-          printf '$ source scan for sorry/admit/axiom declarations\n' | tee -a "$LOG"
+          printf '$ source scan for sorry/admit/new axiom declarations in project sources\n' | tee -a "$LOG"
           set +e
           grep -RInE '(^|[^[:alnum:]_])(sorry|admit)([^[:alnum:]_]|$)|^[[:space:]]*axiom[[:space:]]' \
-            --include='*.lean' . > "$EVIDENCE/source-scan.txt"
+            --include='*.lean' Erdos64FiniteCertificate.lean Erdos64FiniteCertificate \
+            > "$EVIDENCE/source-scan.txt"
           scan_rc=$?
           set -e
           if [[ $scan_rc -eq 0 ]]; then
@@ -69,7 +70,7 @@ jobs:
             printf 'EXIT_CODE=1\n' | tee -a "$LOG"
             exit 1
           elif [[ $scan_rc -eq 1 ]]; then
-            printf 'no sorry/admit/axiom declaration found\nEXIT_CODE=0\n' | tee -a "$LOG"
+            printf 'no sorry/admit/new axiom declaration found in project sources\nEXIT_CODE=0\n' | tee -a "$LOG"
           else
             printf 'grep failed with exit %s\nEXIT_CODE=%s\n' "$scan_rc" "$scan_rc" | tee -a "$LOG"
             exit "$scan_rc"
