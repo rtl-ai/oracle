@@ -1,0 +1,87 @@
+name: Erdos64 cycle-code bounds macOS verification
+
+on:
+  push:
+    branches: ["ci/erdos64-cycle-code-bounds"]
+    paths:
+      - "lean-proof-lab/**"
+      - ".github/workflows/erdos64-cycle-code-bounds-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Compile and audit on macOS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd lean-proof-lab
+          mkdir -p artifacts-macos
+          LOG="$PWD/artifacts-macos/commands.log"
+          : > "$LOG"
+
+          run_logged() {
+            local command="$1"
+            printf '$ %s\n' "$command" | tee -a "$LOG"
+            set +e
+            bash -o pipefail -c "$command" >> "$LOG" 2>&1
+            local rc=$?
+            set -e
+            printf 'EXIT_CODE=%d\n' "$rc" | tee -a "$LOG"
+            if (( rc != 0 )); then
+              exit "$rc"
+            fi
+          }
+
+          run_logged "git rev-parse HEAD"
+          run_logged "curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none"
+          export PATH="$HOME/.elan/bin:$PATH"
+          run_logged "lean --version"
+          run_logged "lake --version"
+          run_logged "lake update"
+          run_logged "git -C .lake/packages/mathlib rev-parse HEAD"
+          run_logged "lake exe cache get"
+
+          SECONDS=0
+          run_logged "lake build Erdos64FiniteCertificate 2>&1 | tee artifacts-macos/lake-build.out"
+          BUILD_SECONDS=$SECONDS
+          SECONDS=0
+          run_logged "lake env lean Erdos64FiniteCertificate/CycleCodeBounds.lean 2>&1 | tee artifacts-macos/cycle-code-bounds.out"
+          DIRECT_SECONDS=$SECONDS
+
+          run_logged "if grep -RInE '(^|[^[:alnum:]_])(sorry|admit)([^[:alnum:]_]|$)|^[[:space:]]*axiom[[:space:]]' Erdos64FiniteCertificate.lean Erdos64FiniteCertificate; then exit 1; fi"
+          run_logged "if grep -q 'sorryAx' artifacts-macos/lake-build.out artifacts-macos/cycle-code-bounds.out; then exit 1; fi"
+
+          {
+            printf 'repository_commit=%s\n' "$GITHUB_SHA"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            printf 'lake_build_seconds=%s\n' "$BUILD_SECONDS"
+            printf 'direct_lean_seconds=%s\n' "$DIRECT_SECONDS"
+          } > artifacts-macos/RUN.txt
+
+          shasum -a 256 \
+            lean-toolchain lakefile.toml \
+            Erdos64FiniteCertificate.lean \
+            Erdos64FiniteCertificate/FiniteCertificateBridge.lean \
+            Erdos64FiniteCertificate/CycleCodeBounds.lean \
+            > artifacts-macos/source.sha256
+          shasum -a 256 artifacts-macos/commands.log artifacts-macos/lake-build.out \
+            artifacts-macos/cycle-code-bounds.out artifacts-macos/RUN.txt \
+            > artifacts-macos/evidence.sha256
+
+      - name: Upload macOS evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-cycle-code-bounds-macos-evidence
+          path: lean-proof-lab/artifacts-macos
+          if-no-files-found: error
+          retention-days: 30
