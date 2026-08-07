@@ -1,0 +1,269 @@
+name: Erdos64 n17 macOS fast validator v4
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n17-macos-fast-v4"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ROOT: erdos64-fast-src
+  FAST_SOURCE_COMMIT: "148865b3d1bd7cbacc412840242fa467282e0728"
+  CHECKER_SOURCE_COMMIT: "3fd2f9ba400a6c1c40a935b00f62008f24ce2d89"
+  CHECKER_SHA256: "433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78"
+  PREFILTER_SHA256: "7bbbc74ca24f799f6e8c077e3cc6b6465473b7d9b5ff37736eafa5f436aa5f06"
+  BOUNDS_SHA256: "60cdd65f44a852efbede1d92d8362e6a48e1d376a580f192c24dcc9b8238574d"
+  COMBINER_SHA256: "b5d945ddd039e9fd187f076da86ea2b516588d6af2bce225833f81c6ce422228"
+  RUNNER_SHA256: "e4dc7dc1aa72dd08890ab09a634e72c65178c9211acd747220d95d04c0bd330e"
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Verify every mirrored Git blob and SHA-256 pin
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$SOURCE_ROOT/validation"
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+
+          root = pathlib.Path('erdos64-fast-src')
+          expected = {
+              'search/rooted_block_exact.py': {
+                  'git_blob': 'bcd5630918b387820cb0d0fb0ee55808d61e12a5',
+                  'sha256': '${{ env.CHECKER_SHA256 }}',
+                  'source_commit': '${{ env.CHECKER_SOURCE_COMMIT }}',
+              },
+              'search/rooted_prefilter.c': {
+                  'git_blob': '181a33d5423d56fe0cabfbae01b75dbce341b894',
+                  'sha256': '${{ env.PREFILTER_SHA256 }}',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+              'search/rooted_bounds.py': {
+                  'git_blob': '1cd7b3885fa047c5d9a8cc532aca81d9d2f4e84a',
+                  'sha256': '${{ env.BOUNDS_SHA256 }}',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+              'search/combine_rooted_fast_summary.py': {
+                  'git_blob': '3f1cc6fcdeb2cea415ee907bff6b6722090c6a06',
+                  'sha256': '${{ env.COMBINER_SHA256 }}',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+              'search/run_rooted_fast_shard.sh': {
+                  'git_blob': '5d95448bb2036b3f69f8e291e7cd2eb28dcfb523',
+                  'sha256': '${{ env.RUNNER_SHA256 }}',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+              'tests/test_rooted_prefilter.py': {
+                  'git_blob': '60d4ac08d2119fe946827491df491d4f7e8b85f9',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+              'tests/test_combine_rooted_fast_summary.py': {
+                  'git_blob': 'b065320ab7e6f6f43cc2800ae58241b227137be7',
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              },
+          }
+          records = []
+          errors = []
+          for relative, pin in expected.items():
+              path = root / relative
+              data = path.read_bytes()
+              sha256 = hashlib.sha256(data).hexdigest()
+              git_blob = subprocess.check_output(
+                  ['git', 'hash-object', str(path)], text=True
+              ).strip()
+              record = {
+                  'path': relative,
+                  'bytes': len(data),
+                  'actual_git_blob': git_blob,
+                  'expected_git_blob': pin['git_blob'],
+                  'actual_sha256': sha256,
+                  'expected_sha256': pin.get('sha256'),
+                  'source_commit': pin['source_commit'],
+              }
+              records.append(record)
+              if git_blob != pin['git_blob']:
+                  errors.append(f'{relative}: Git blob mismatch')
+              if pin.get('sha256') is not None and sha256 != pin['sha256']:
+                  errors.append(f'{relative}: SHA-256 mismatch')
+          result = {
+              'schema': 'erdos64-fast-source-mirror-audit-v1',
+              'mirror_repository': 'rtl-ai/oracle',
+              'mirror_commit': '${{ github.sha }}',
+              'records': records,
+              'errors': errors,
+          }
+          (root / 'validation/source-audit.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          PY
+
+      - name: Install nauty and run optimized and sanitizer differential suites
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -Eeuo pipefail
+          brew list nauty >/dev/null 2>&1 || brew install nauty
+          cd "$SOURCE_ROOT"
+          {
+            printf 'mirror_repository=rtl-ai/oracle\n'
+            printf 'mirror_commit=%s\n' "$GITHUB_SHA"
+            printf 'fast_source_commit=%s\n' "$FAST_SOURCE_COMMIT"
+            printf 'checker_source_commit=%s\n' "$CHECKER_SOURCE_COMMIT"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            printf 'started_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > validation/RUN.txt
+
+          python3 --version 2>&1 | tee validation/python-version.txt
+          cc --version 2>&1 | head -n 3 | tee validation/cc-version.txt
+          GENG=$(command -v geng || command -v nauty-geng)
+          printf '%s\n' "$GENG" | tee validation/geng-path.txt
+          "$GENG" -help 2>&1 | head -n 10 > validation/geng-help.txt
+
+          cc -std=c17 -O3 -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter \
+            > validation/compile-optimized.stdout \
+            2> validation/compile-optimized.stderr
+          printf 'optimized_compile_exit_code=0\n' >> validation/RUN.txt
+
+          cc -std=c17 -O1 -g -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter_san \
+            > validation/compile-sanitizer.stdout \
+            2> validation/compile-sanitizer.stderr
+          printf 'sanitizer_compile_exit_code=0\n' >> validation/RUN.txt
+
+          python3 -m py_compile search/*.py tests/*.py
+          printf 'python_compile_exit_code=0\n' >> validation/RUN.txt
+
+          python3 tests/test_rooted_prefilter.py \
+            --binary "$PWD/validation/rooted_prefilter" \
+            | tee validation/prefilter-full-tests.jsonl
+          printf 'optimized_differential_exit_code=0\n' >> validation/RUN.txt
+
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            python3 tests/test_rooted_prefilter.py \
+              --binary "$PWD/validation/rooted_prefilter_san" --quick \
+              | tee validation/prefilter-sanitizer-tests.jsonl
+          printf 'sanitizer_differential_exit_code=0\n' >> validation/RUN.txt
+
+          python3 -m unittest -v tests/test_combine_rooted_fast_summary.py \
+            2>&1 | tee validation/combiner-tests.txt
+          printf 'combiner_tests_exit_code=0\n' >> validation/RUN.txt
+
+          python3 search/rooted_bounds.py 17 \
+            --expect-min-edges 25 --expect-max-edges 38 --expect-max-degree 8 \
+            | tee validation/bounds.json
+          printf 'bounds_audit_exit_code=0\n' >> validation/RUN.txt
+
+      - name: Execute the complete fast shard wrapper with a controlled generator
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$SOURCE_ROOT"
+          python3 - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'search')
+          import rooted_block_exact as exact
+
+          def add(graph, left, right):
+              graph[left] |= 1 << right
+              graph[right] |= 1 << left
+
+          order = 17
+          complete = [0] * order
+          for left in range(order):
+              for right in range(left + 1, order):
+                  add(complete, left, right)
+          cycle = [0] * order
+          for left in range(order):
+              add(cycle, left, (left + 1) % order)
+          pathlib.Path('validation/mock-input.g6').write_text(
+              exact.encode_graph6(tuple(complete)) + '\n'
+              + exact.encode_graph6(tuple(cycle)) + '\n'
+          )
+          PY
+          cat > validation/mock-geng <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cat "$(dirname "$0")/mock-input.g6"
+          SH
+          chmod +x validation/mock-geng search/run_rooted_fast_shard.sh
+
+          TERM=xterm \
+          SOURCE_REPOSITORY=rtl-ai/erdos-64-power2-cycle-lab \
+          SOURCE_COMMIT="$FAST_SOURCE_COMMIT" \
+          GENG_BIN="$PWD/validation/mock-geng" \
+            bash search/run_rooted_fast_shard.sh 0 1 validation/mock-shard \
+              > validation/mock-shard.stdout \
+              2> validation/mock-shard.stderr
+          printf 'mock_shard_tool_exit_code=0\n' >> validation/RUN.txt
+
+          python3 - <<'PY'
+          import json, pathlib
+
+          root = pathlib.Path('validation/mock-shard')
+          run = dict(
+              line.split('=', 1)
+              for line in (root / 'RUN.txt').read_text().splitlines()
+              if '=' in line
+          )
+          required = [
+              'compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+              'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+              'combiner_exit_code', 'pipeline_exit_code',
+          ]
+          nonzero = {name: run.get(name) for name in required if run.get(name) != '0'}
+          summary = json.loads((root / 'combined-summary.json').read_text())
+          checks = {
+              'all_stage_exit_codes_zero': not nonzero,
+              'generated_graphs_is_2': summary['counts']['generated_graphs'] == 2,
+              'rooted_admissible_is_1': summary['counts']['rooted_admissible'] == 1,
+              'validated_c8_hits_is_1': summary['counts']['validated_c8_prefilter_hits'] == 1,
+              'power_free_candidates_is_0': summary['counts']['power_free_candidates'] == 0,
+              'all_combiner_checks_true': all(summary['checks'].values()),
+          }
+          evidence = {'run': run, 'summary': summary, 'checks': checks, 'nonzero': nonzero}
+          pathlib.Path('validation/mock-shard-audit.json').write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(evidence, indent=2, sort_keys=True))
+          if not all(checks.values()):
+              raise SystemExit('mock shard audit failed')
+          PY
+          printf 'mock_shard_audit_exit_code=0\n' >> validation/RUN.txt
+          printf 'finished_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> validation/RUN.txt
+
+          python3 - <<'PY'
+          import hashlib, pathlib
+          root = pathlib.Path('validation')
+          lines = []
+          for path in sorted(root.rglob('*')):
+              if path.is_file() and path.name != 'SHA256SUMS.txt':
+                  lines.append(
+                      f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}'
+                  )
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+          PY
+          cat validation/RUN.txt
+
+      - name: Upload complete validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-macos-fast-v4-validation
+          path: erdos64-fast-src/validation
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
