@@ -1,0 +1,45 @@
+name: Nauty binary bundle
+
+on:
+  push:
+    branches: ["ci/nauty-binary-bundle"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install and package nauty with shared-library closure
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nauty >/dev/null
+          GENG=$(command -v geng || command -v nauty-geng)
+          mkdir -p bundle/bin bundle/lib evidence
+          cp "$GENG" bundle/bin/nauty-geng
+          ldd "$GENG" | tee evidence/ldd.txt
+          ldd "$GENG" | awk '/=> \/[^ ]+/ {print $3} /^\// {print $1}' | sort -u > evidence/library-paths.txt
+          while IFS= read -r lib; do
+            cp -L "$lib" "bundle/lib/$(basename "$lib")"
+          done < evidence/library-paths.txt
+          "$GENG" -help 2>&1 | head -n 8 > evidence/geng-help.txt
+          dpkg-query -W -f='${Package}=${Version}\n' nauty libnauty-2.8.8 libcliquer1 > evidence/packages.txt
+          printf 'runner_commit=%s\n' "$GITHUB_SHA" > evidence/RUN.txt
+          printf 'geng_path=%s\n' "$GENG" >> evidence/RUN.txt
+          tar -czf nauty-bundle.tar.gz bundle evidence
+          sha256sum nauty-bundle.tar.gz bundle/bin/nauty-geng bundle/lib/* > evidence/SHA256SUMS.txt
+      - name: Upload bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nauty-2.8.8-ubuntu24-amd64-bundle
+          path: |
+            nauty-bundle.tar.gz
+            evidence
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
