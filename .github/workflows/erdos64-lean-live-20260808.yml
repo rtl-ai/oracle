@@ -43,6 +43,8 @@ jobs:
           sha256sum "$EVIDENCE/elan-init.sh" | tee -a "$LOG"
           run_cmd sh "$EVIDENCE/elan-init.sh" -y --default-toolchain none
           source "$HOME/.elan/env"
+          run_cmd elan toolchain install leanprover/lean4:v4.27.0
+          run_cmd elan default leanprover/lean4:v4.27.0
           run_cmd lean --version
           run_cmd lake --version
 
