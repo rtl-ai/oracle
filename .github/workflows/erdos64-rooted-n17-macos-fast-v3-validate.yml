@@ -1,0 +1,270 @@
+name: Erdos64 n17 macOS fast validator v3
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n17-macos-fast-v3"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HISTORICAL_PAYLOAD_COMMIT: "9ed875e6d292f0912b5a2d2a92286df0c1728211"
+  HISTORICAL_PAYLOAD_PATH: "ci/erdos64-rooted-n17-fast-source.tar.gz.b64"
+  SOURCE_ARCHIVE_SHA256: "ba2df9a788e4d868cf136054150baa8e465daee9f5c217d141a6f496a71a1b6b"
+  FAST_SOURCE_COMMIT: "148865b3d1bd7cbacc412840242fa467282e0728"
+  CHECKER_SHA256: "433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78"
+  PREFILTER_SHA256: "7bbbc74ca24f799f6e8c077e3cc6b6465473b7d9b5ff37736eafa5f436aa5f06"
+  BOUNDS_SHA256: "60cdd65f44a852efbede1d92d8362e6a48e1d376a580f192c24dcc9b8238574d"
+  COMBINER_SHA256: "b5d945ddd039e9fd187f076da86ea2b516588d6af2bce225833f81c6ce422228"
+  RUNNER_SHA256: "e4dc7dc1aa72dd08890ab09a634e72c65178c9211acd747220d95d04c0bd330e"
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Recover and audit immutable historical source payload
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p source/validation
+          git cat-file -e "$HISTORICAL_PAYLOAD_COMMIT:$HISTORICAL_PAYLOAD_PATH"
+          git show "$HISTORICAL_PAYLOAD_COMMIT:$HISTORICAL_PAYLOAD_PATH" \
+            > source/validation/historical-payload.b64
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib
+
+          evidence = pathlib.Path('source/validation')
+          encoded = evidence / 'historical-payload.b64'
+          raw = encoded.read_bytes()
+          text = raw.decode('ascii')
+          payload = ''.join(text.split())
+          data = base64.b64decode(payload, validate=True)
+          actual = hashlib.sha256(data).hexdigest()
+          expected = '${{ env.SOURCE_ARCHIVE_SHA256 }}'
+          result = {
+              'historical_commit': '${{ env.HISTORICAL_PAYLOAD_COMMIT }}',
+              'historical_path': '${{ env.HISTORICAL_PAYLOAD_PATH }}',
+              'raw_payload_bytes': len(raw),
+              'raw_payload_sha256': hashlib.sha256(raw).hexdigest(),
+              'normalized_base64_characters': len(payload),
+              'decoded_archive_bytes': len(data),
+              'decoded_archive_sha256': actual,
+              'expected_archive_sha256': expected,
+          }
+          (evidence / 'archive-audit.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if actual != expected:
+              raise SystemExit(f'archive SHA mismatch: {actual} != {expected}')
+          pathlib.Path('source.tar.gz').write_bytes(data)
+          PY
+          tar -xzf source.tar.gz -C source
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+
+          root = pathlib.Path('source')
+          manifest = json.loads((root / 'SOURCE_MANIFEST.json').read_text())
+          errors = []
+          observed_manifest = []
+          for item in manifest['files']:
+              path = root / item['path']
+              actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              actual_size = path.stat().st_size
+              observed_manifest.append({
+                  'path': item['path'],
+                  'actual_sha256': actual_digest,
+                  'expected_sha256': item['sha256'],
+                  'actual_size': actual_size,
+                  'expected_size': item['size'],
+              })
+              if actual_digest != item['sha256'] or actual_size != item['size']:
+                  errors.append(item['path'])
+          pinned = {
+              'search/rooted_block_exact.py': '${{ env.CHECKER_SHA256 }}',
+              'search/rooted_prefilter.c': '${{ env.PREFILTER_SHA256 }}',
+              'search/rooted_bounds.py': '${{ env.BOUNDS_SHA256 }}',
+              'search/combine_rooted_fast_summary.py': '${{ env.COMBINER_SHA256 }}',
+              'search/run_rooted_fast_shard.sh': '${{ env.RUNNER_SHA256 }}',
+          }
+          pinned_results = {}
+          for name, expected in pinned.items():
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              pinned_results[name] = {'actual': actual, 'expected': expected}
+              if actual != expected:
+                  errors.append(name)
+          result = {
+              'manifest_metadata': manifest,
+              'observed_manifest': observed_manifest,
+              'pinned_results': pinned_results,
+              'errors': sorted(set(errors)),
+          }
+          (root / 'validation/source-audit.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if errors:
+              raise SystemExit('source audit failed: ' + ', '.join(sorted(set(errors))))
+          PY
+
+      - name: Install nauty and run compiled differential validation
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -Eeuo pipefail
+          brew list nauty >/dev/null 2>&1 || brew install nauty
+          cd source
+          {
+            printf 'harness_commit=%s\n' "$GITHUB_SHA"
+            printf 'historical_payload_commit=%s\n' "$HISTORICAL_PAYLOAD_COMMIT"
+            printf 'fast_source_commit=%s\n' "$FAST_SOURCE_COMMIT"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            printf 'started_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > validation/RUN.txt
+          python3 --version 2>&1 | tee validation/python-version.txt
+          cc --version 2>&1 | head -n 3 | tee validation/cc-version.txt
+          GENG=$(command -v geng || command -v nauty-geng)
+          printf '%s\n' "$GENG" | tee validation/geng-path.txt
+          "$GENG" -help 2>&1 | head -n 10 > validation/geng-help.txt
+
+          cc -std=c17 -O3 -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter \
+            > validation/compile-optimized.stdout \
+            2> validation/compile-optimized.stderr
+          printf 'optimized_compile_exit_code=0\n' >> validation/RUN.txt
+
+          cc -std=c17 -O1 -g -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter_san \
+            > validation/compile-sanitizer.stdout \
+            2> validation/compile-sanitizer.stderr
+          printf 'sanitizer_compile_exit_code=0\n' >> validation/RUN.txt
+
+          python3 -m py_compile search/*.py tests/*.py
+          printf 'python_compile_exit_code=0\n' >> validation/RUN.txt
+
+          python3 tests/test_rooted_prefilter.py \
+            --binary "$PWD/validation/rooted_prefilter" \
+            | tee validation/prefilter-full-tests.jsonl
+          printf 'optimized_differential_exit_code=0\n' >> validation/RUN.txt
+
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            python3 tests/test_rooted_prefilter.py \
+              --binary "$PWD/validation/rooted_prefilter_san" --quick \
+              | tee validation/prefilter-sanitizer-tests.jsonl
+          printf 'sanitizer_differential_exit_code=0\n' >> validation/RUN.txt
+
+          python3 -m unittest -v tests/test_combine_rooted_fast_summary.py \
+            2>&1 | tee validation/combiner-tests.txt
+          printf 'combiner_tests_exit_code=0\n' >> validation/RUN.txt
+
+          python3 search/rooted_bounds.py 17 \
+            --expect-min-edges 25 --expect-max-edges 38 --expect-max-degree 8 \
+            | tee validation/bounds.json
+          printf 'bounds_audit_exit_code=0\n' >> validation/RUN.txt
+
+      - name: Execute portable fast shard wrapper end to end
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd source
+          python3 - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'search')
+          import rooted_block_exact as exact
+
+          def add(graph, left, right):
+              graph[left] |= 1 << right
+              graph[right] |= 1 << left
+
+          order = 17
+          complete = [0] * order
+          for left in range(order):
+              for right in range(left + 1, order):
+                  add(complete, left, right)
+          cycle = [0] * order
+          for left in range(order):
+              add(cycle, left, (left + 1) % order)
+          pathlib.Path('validation/mock-input.g6').write_text(
+              exact.encode_graph6(tuple(complete)) + '\n'
+              + exact.encode_graph6(tuple(cycle)) + '\n'
+          )
+          PY
+          cat > validation/mock-geng <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cat "$(dirname "$0")/mock-input.g6"
+          SH
+          chmod +x validation/mock-geng search/run_rooted_fast_shard.sh
+          TERM=xterm \
+          SOURCE_COMMIT="$FAST_SOURCE_COMMIT" \
+          GENG_BIN="$PWD/validation/mock-geng" \
+            bash search/run_rooted_fast_shard.sh 0 1 validation/mock-shard \
+              > validation/mock-shard.stdout \
+              2> validation/mock-shard.stderr
+          printf 'mock_shard_tool_exit_code=0\n' >> validation/RUN.txt
+
+          python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path('validation/mock-shard')
+          run = dict(
+              line.split('=', 1)
+              for line in (root / 'RUN.txt').read_text().splitlines()
+              if '=' in line
+          )
+          required = [
+              'compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+              'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+              'combiner_exit_code', 'pipeline_exit_code',
+          ]
+          nonzero = {name: run.get(name) for name in required if run.get(name) != '0'}
+          summary = json.loads((root / 'combined-summary.json').read_text())
+          checks = {
+              'all_stage_exit_codes_zero': not nonzero,
+              'generated_graphs_is_2': summary['counts']['generated_graphs'] == 2,
+              'rooted_admissible_is_1': summary['counts']['rooted_admissible'] == 1,
+              'validated_c8_hits_is_1': summary['counts']['validated_c8_prefilter_hits'] == 1,
+              'power_free_candidates_is_0': summary['counts']['power_free_candidates'] == 0,
+              'all_combiner_checks_true': all(summary['checks'].values()),
+          }
+          evidence = {'run': run, 'summary': summary, 'checks': checks, 'nonzero': nonzero}
+          pathlib.Path('validation/mock-shard-audit.json').write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(evidence, indent=2, sort_keys=True))
+          if not all(checks.values()):
+              raise SystemExit('mock shard audit failed')
+          PY
+          printf 'mock_shard_audit_exit_code=0\n' >> validation/RUN.txt
+          printf 'finished_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> validation/RUN.txt
+
+          python3 - <<'PY'
+          import hashlib, pathlib
+          root = pathlib.Path('validation')
+          lines = []
+          for path in sorted(root.rglob('*')):
+              if path.is_file() and path.name != 'SHA256SUMS.txt':
+                  lines.append(
+                      f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}'
+                  )
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+          PY
+          cat validation/RUN.txt
+
+      - name: Upload complete validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-macos-fast-v3-validation
+          path: source/validation
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
