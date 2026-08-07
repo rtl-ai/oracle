@@ -1,0 +1,435 @@
+name: Erdos64 rooted-block n17 macOS fast exact
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n17-macos-fast"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ARCHIVE_SHA256: "ba2df9a788e4d868cf136054150baa8e465daee9f5c217d141a6f496a71a1b6b"
+  FAST_SOURCE_COMMIT: "148865b3d1bd7cbacc412840242fa467282e0728"
+  CHECKER_SOURCE_COMMIT: "3fd2f9ba400a6c1c40a935b00f62008f24ce2d89"
+  CHECKER_SHA256: "433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78"
+  PREFILTER_SHA256: "7bbbc74ca24f799f6e8c077e3cc6b6465473b7d9b5ff37736eafa5f436aa5f06"
+  BOUNDS_SHA256: "60cdd65f44a852efbede1d92d8362e6a48e1d376a580f192c24dcc9b8238574d"
+  COMBINER_SHA256: "b5d945ddd039e9fd187f076da86ea2b516588d6af2bce225833f81c6ce422228"
+  RUNNER_SHA256: "e4dc7dc1aa72dd08890ab09a634e72c65178c9211acd747220d95d04c0bd330e"
+  MODULUS: "20"
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Decode and verify exact source bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib
+          encoded = pathlib.Path('ci/erdos64-rooted-n17-fast-source.tar.gz.b64')
+          archive = pathlib.Path('source.tar.gz')
+          data = base64.b64decode(encoded.read_text(), validate=True)
+          actual = hashlib.sha256(data).hexdigest()
+          expected = '${{ env.SOURCE_ARCHIVE_SHA256 }}'
+          if actual != expected:
+              raise SystemExit(f'archive SHA mismatch: {actual} != {expected}')
+          archive.write_bytes(data)
+          print(json.dumps({'archive_sha256': actual, 'archive_bytes': len(data)}, sort_keys=True))
+          PY
+          mkdir source
+          tar -xzf source.tar.gz -C source
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('source')
+          manifest = json.loads((root / 'SOURCE_MANIFEST.json').read_text())
+          for item in manifest['files']:
+              path = root / item['path']
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != item['sha256'] or path.stat().st_size != item['size']:
+                  raise SystemExit(f'source mismatch: {item["path"]}')
+          expected = {
+              'search/rooted_block_exact.py': '${{ env.CHECKER_SHA256 }}',
+              'search/rooted_prefilter.c': '${{ env.PREFILTER_SHA256 }}',
+              'search/rooted_bounds.py': '${{ env.BOUNDS_SHA256 }}',
+              'search/combine_rooted_fast_summary.py': '${{ env.COMBINER_SHA256 }}',
+              'search/run_rooted_fast_shard.sh': '${{ env.RUNNER_SHA256 }}',
+          }
+          for name, digest in expected.items():
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f'pinned source mismatch: {name}: {actual}')
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+      - name: Install nauty and execute full validation suite
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -Eeuo pipefail
+          brew install nauty
+          cd source
+          mkdir -p validation
+          printf 'harness_commit=%s\nrunner_os=%s\nrunner_arch=%s\n' \
+            "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH" > validation/RUN.txt
+          python3 --version | tee validation/python-version.txt
+          cc --version | head -n 2 | tee validation/cc-version.txt
+          (command -v geng || command -v nauty-geng) | tee validation/geng-path.txt
+          (geng -help 2>&1 || nauty-geng -help 2>&1) | head -n 8 > validation/geng-help.txt
+          cc -std=c17 -O3 -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter
+          cc -std=c17 -O1 -g -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Werror \
+            search/rooted_prefilter.c -o validation/rooted_prefilter_san
+          python3 -m py_compile search/*.py tests/*.py
+          python3 tests/test_rooted_prefilter.py \
+            --binary "$PWD/validation/rooted_prefilter" \
+            | tee validation/prefilter-full-tests.jsonl
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            python3 tests/test_rooted_prefilter.py \
+              --binary "$PWD/validation/rooted_prefilter_san" --quick \
+              | tee validation/prefilter-sanitizer-tests.jsonl
+          python3 -m unittest -v tests/test_combine_rooted_fast_summary.py \
+            2>&1 | tee validation/combiner-tests.txt
+          python3 search/rooted_bounds.py 17 \
+            --expect-min-edges 25 --expect-max-edges 38 --expect-max-degree 8 \
+            | tee validation/bounds.json
+      - name: Execute portable mock shard on macOS
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd source
+          python3 - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'search')
+          import rooted_block_exact as exact
+          def add(g, u, v):
+              g[u] |= 1 << v
+              g[v] |= 1 << u
+          n = 17
+          complete = [0] * n
+          for u in range(n):
+              for v in range(u + 1, n):
+                  add(complete, u, v)
+          cycle = [0] * n
+          for u in range(n):
+              add(cycle, u, (u + 1) % n)
+          pathlib.Path('validation/mock-input.g6').write_text(
+              exact.encode_graph6(tuple(complete)) + '\n'
+              + exact.encode_graph6(tuple(cycle)) + '\n'
+          )
+          PY
+          cat > validation/mock-geng <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cat "$(dirname "$0")/mock-input.g6"
+          SH
+          chmod +x validation/mock-geng search/run_rooted_fast_shard.sh
+          SOURCE_COMMIT="$FAST_SOURCE_COMMIT" \
+          GENG_BIN="$PWD/validation/mock-geng" \
+            bash search/run_rooted_fast_shard.sh 0 1 validation/mock-shard \
+            > validation/mock-shard.stdout 2> validation/mock-shard.stderr
+          python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path('validation/mock-shard')
+          run = dict(line.split('=', 1) for line in (root / 'RUN.txt').read_text().splitlines() if '=' in line)
+          fields = ['compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+                    'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+                    'combiner_exit_code', 'pipeline_exit_code']
+          if any(run.get(field) != '0' for field in fields):
+              raise SystemExit({'nonzero': {field: run.get(field) for field in fields}})
+          result = json.loads((root / 'combined-summary.json').read_text())
+          if result['counts']['generated_graphs'] != 2:
+              raise SystemExit('mock input count mismatch')
+          if result['counts']['validated_c8_prefilter_hits'] != 1:
+              raise SystemExit('mock C8 count mismatch')
+          if result['counts']['power_free_candidates'] != 0:
+              raise SystemExit('unexpected mock candidate')
+          print(json.dumps({'status': 'ok', 'run': run, 'summary': result}, indent=2, sort_keys=True))
+          PY
+          python3 - <<'PY'
+          import hashlib, pathlib
+          root = pathlib.Path('validation')
+          lines = []
+          for path in sorted(root.rglob('*')):
+              if path.is_file() and path.name != 'SHA256SUMS.txt':
+                  lines.append(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(root)}')
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+          PY
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-macos-fast-validation
+          path: source/validation
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+  shard:
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        residue: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Decode and verify exact source bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, pathlib
+          data = base64.b64decode(pathlib.Path('ci/erdos64-rooted-n17-fast-source.tar.gz.b64').read_text(), validate=True)
+          actual = hashlib.sha256(data).hexdigest()
+          if actual != '${{ env.SOURCE_ARCHIVE_SHA256 }}':
+              raise SystemExit(f'archive SHA mismatch: {actual}')
+          pathlib.Path('source.tar.gz').write_bytes(data)
+          PY
+          mkdir source
+          tar -xzf source.tar.gz -C source
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('source')
+          manifest = json.loads((root / 'SOURCE_MANIFEST.json').read_text())
+          for item in manifest['files']:
+              path = root / item['path']
+              if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+                  raise SystemExit(f'source mismatch: {item["path"]}')
+          PY
+      - name: Install nauty and run exact canonical shard
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -Eeuo pipefail
+          brew install nauty
+          chmod +x source/search/run_rooted_fast_shard.sh
+          GENG_BIN=$(command -v geng || command -v nauty-geng)
+          out="artifacts/shard-17-20-${{ matrix.residue }}"
+          mkdir -p artifacts
+          SOURCE_REPOSITORY=rtl-ai/erdos-64-power2-cycle-lab \
+          SOURCE_COMMIT="$FAST_SOURCE_COMMIT" \
+          GENG_BIN="$GENG_BIN" \
+            bash source/search/run_rooted_fast_shard.sh \
+              '${{ matrix.residue }}' "$MODULUS" "$out" \
+              > "$out.workflow.stdout" 2> "$out.workflow.stderr"
+          python3 - "$out" '${{ matrix.residue }}' <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          residue = int(sys.argv[2])
+          run = dict(line.split('=', 1) for line in (root / 'RUN.txt').read_text().splitlines() if '=' in line)
+          required_zero = ['compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+                           'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+                           'combiner_exit_code', 'pipeline_exit_code']
+          failures = {key: run.get(key) for key in required_zero if run.get(key) != '0'}
+          if failures:
+              raise SystemExit({'nonzero_exit_codes': failures})
+          expected = {
+              'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              'rooted_block_exact_sha256': '${{ env.CHECKER_SHA256 }}',
+              'rooted_prefilter_source_sha256': '${{ env.PREFILTER_SHA256 }}',
+              'rooted_bounds_sha256': '${{ env.BOUNDS_SHA256 }}',
+              'combiner_sha256': '${{ env.COMBINER_SHA256 }}',
+              'order': '17', 'residue': str(residue), 'modulus': '20',
+          }
+          mismatches = {key: {'actual': run.get(key), 'expected': value}
+                        for key, value in expected.items() if run.get(key) != value}
+          if mismatches:
+              raise SystemExit({'run_mismatches': mismatches})
+          summary = json.loads((root / 'combined-summary.json').read_text())
+          if not all(summary['checks'].values()):
+              raise SystemExit('combined consistency check false')
+          if int(run['candidate_count']) != summary['counts']['power_free_candidates']:
+              raise SystemExit('candidate count mismatch')
+          for line in (root / 'SHA256SUMS.txt').read_text().splitlines():
+              digest, name = line.split('  ', 1)
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != digest:
+                  raise SystemExit(f'manifest mismatch: {name}')
+          print(json.dumps({'residue': residue, 'run': run, 'summary': summary}, indent=2, sort_keys=True))
+          PY
+      - name: Upload exact shard evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-macos-fast-${{ matrix.residue }}-of-20
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+  aggregate:
+    if: always()
+    needs: shard
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: erdos64-rooted-n17-macos-fast-*-of-20
+          path: downloaded
+          merge-multiple: true
+      - name: Decode pinned checker for aggregate replay
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, pathlib
+          data = base64.b64decode(pathlib.Path('ci/erdos64-rooted-n17-fast-source.tar.gz.b64').read_text(), validate=True)
+          if hashlib.sha256(data).hexdigest() != '${{ env.SOURCE_ARCHIVE_SHA256 }}':
+              raise SystemExit('archive SHA mismatch')
+          pathlib.Path('source.tar.gz').write_bytes(data)
+          PY
+          mkdir source aggregate
+          tar -xzf source.tar.gz -C source
+      - name: Independently audit all residues and replay every survivor
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('downloaded')
+          dirs = sorted(root.glob('shard-17-20-*'), key=lambda path: int(path.name.rsplit('-', 1)[1]))
+          seen = set()
+          records = []
+          totals = {}
+          first_hits = {}
+          candidate_parts = []
+          survivor_parts = []
+          errors = []
+          starts = []
+          finishes = []
+          elapsed = []
+          for directory in dirs:
+              run = dict(line.split('=', 1) for line in (directory / 'RUN.txt').read_text().splitlines() if '=' in line)
+              residue = int(run.get('residue', '-1'))
+              if residue in seen:
+                  errors.append(f'duplicate residue {residue}')
+              seen.add(residue)
+              expected = {
+                  'source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+                  'rooted_block_exact_sha256': '${{ env.CHECKER_SHA256 }}',
+                  'rooted_prefilter_source_sha256': '${{ env.PREFILTER_SHA256 }}',
+                  'rooted_bounds_sha256': '${{ env.BOUNDS_SHA256 }}',
+                  'combiner_sha256': '${{ env.COMBINER_SHA256 }}',
+                  'order': '17', 'modulus': '20', 'residue': str(residue),
+              }
+              for key, value in expected.items():
+                  if run.get(key) != value:
+                      errors.append(f'{directory.name}: {key}={run.get(key)!r} expected {value!r}')
+              for key in ['compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+                          'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+                          'combiner_exit_code', 'pipeline_exit_code']:
+                  if run.get(key) != '0':
+                      errors.append(f'{directory.name}: {key}={run.get(key)}')
+              summary = json.loads((directory / 'combined-summary.json').read_text())
+              if not all(summary['checks'].values()):
+                  errors.append(f'{directory.name}: false consistency check')
+              for key, value in summary['counts'].items():
+                  totals[key] = totals.get(key, 0) + int(value)
+              for key, value in summary['first_hit_histogram'].items():
+                  first_hits[key] = first_hits.get(key, 0) + int(value)
+              if int(run['candidate_count']) != summary['counts']['power_free_candidates']:
+                  errors.append(f'{directory.name}: candidate count mismatch')
+              for line in (directory / 'SHA256SUMS.txt').read_text().splitlines():
+                  digest, name = line.split('  ', 1)
+                  if hashlib.sha256((directory / name).read_bytes()).hexdigest() != digest:
+                      errors.append(f'{directory.name}: manifest mismatch {name}')
+              records.append({'residue': residue, 'run': run, 'summary': summary})
+              candidate_parts.append(directory / 'candidates.jsonl')
+              survivor_parts.append(directory / 'survivors.g6')
+              starts.append(run['started_utc'])
+              finishes.append(run['finished_utc'])
+              elapsed.append(int(run['elapsed_seconds']))
+          missing = sorted(set(range(20)) - seen)
+          if missing:
+              errors.append(f'missing residues {missing}')
+          aggregate = {
+              'schema': 'erdos64-rooted-n17-macos-fast-aggregate-v1',
+              'completed_residues': len(seen),
+              'missing_residues': missing,
+              'source_archive_sha256': '${{ env.SOURCE_ARCHIVE_SHA256 }}',
+              'fast_source_commit': '${{ env.FAST_SOURCE_COMMIT }}',
+              'checker_source_commit': '${{ env.CHECKER_SOURCE_COMMIT }}',
+              'component_sha256': {
+                  'checker': '${{ env.CHECKER_SHA256 }}',
+                  'prefilter': '${{ env.PREFILTER_SHA256 }}',
+                  'bounds': '${{ env.BOUNDS_SHA256 }}',
+                  'combiner': '${{ env.COMBINER_SHA256 }}',
+                  'runner': '${{ env.RUNNER_SHA256 }}',
+              },
+              'totals': totals,
+              'first_hit_histogram': dict(sorted(first_hits.items())),
+              'runtime': {
+                  'sum_elapsed_seconds': sum(elapsed) if elapsed else 0,
+                  'minimum_shard_seconds': min(elapsed) if elapsed else None,
+                  'maximum_shard_seconds': max(elapsed) if elapsed else None,
+                  'earliest_start_utc': min(starts) if starts else None,
+                  'latest_finish_utc': max(finishes) if finishes else None,
+              },
+              'counterexample_found': totals.get('power_free_candidates', 0) > 0,
+              'errors': errors,
+          }
+          pathlib.Path('aggregate/aggregate.json').write_text(json.dumps(aggregate, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('aggregate/per-shard.json').write_text(json.dumps(records, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('aggregate/missing-residues.txt').write_text('\n'.join(map(str, missing)) + ('\n' if missing else ''))
+          with pathlib.Path('aggregate/all-survivors.g6').open('wb') as output:
+              for part in survivor_parts:
+                  output.write(part.read_bytes())
+          with pathlib.Path('aggregate/all-candidates-from-shards.jsonl').open('wb') as output:
+              for part in candidate_parts:
+                  output.write(part.read_bytes())
+          print(json.dumps(aggregate, indent=2, sort_keys=True))
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          PY
+          python3 source/search/rooted_block_exact.py \
+            --order 17 --require-c4-free \
+            --candidates aggregate/replay-candidates.jsonl \
+            --summary aggregate/replay-summary.json \
+            < aggregate/all-survivors.g6 \
+            > aggregate/replay.stdout 2> aggregate/replay.stderr
+          cmp aggregate/all-candidates-from-shards.jsonl aggregate/replay-candidates.jsonl
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('aggregate')
+          aggregate = json.loads((root / 'aggregate.json').read_text())
+          replay = json.loads((root / 'replay-summary.json').read_text())
+          totals = aggregate['totals']
+          expected = {
+              'input_graphs': totals['exact_fallback_inputs'],
+              'rooted_admissible': totals['exact_fallback_inputs'],
+              'with_power_of_two_cycle': totals['exact_fallback_power_hits'],
+              'power_free_candidates': totals['power_free_candidates'],
+          }
+          mismatches = {key: {'actual': replay.get(key), 'expected': value}
+                        for key, value in expected.items() if replay.get(key) != value}
+          if mismatches:
+              raise SystemExit({'replay_mismatches': mismatches})
+          if replay.get('dual_parser_agreement') is not True or replay.get('fail_closed') is not True:
+              raise SystemExit('replay verifier flags false')
+          lines = []
+          for path in sorted(root.iterdir(), key=lambda item: item.name):
+              if path.is_file() and path.name != 'SHA256SUMS.txt':
+                  lines.append(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}')
+          (root / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+          print(json.dumps({'status': 'ok', 'expected': expected, 'replay': replay}, indent=2, sort_keys=True))
+          PY
+      - name: Upload aggregate exact evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-macos-fast-aggregate
+          path: aggregate
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
