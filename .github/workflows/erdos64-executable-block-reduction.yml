@@ -35,7 +35,7 @@ jobs:
           export REVERSE_MAX_N=8
           export FORWARD_AUDIT_MAX_N=9
           export SOURCE_REPOSITORY=rtl-ai/erdos-64-power2-cycle-lab
-          export SOURCE_COMMIT=d1e6939fc4dd8e70322f23226069b0d9650cc843
+          export SOURCE_COMMIT=37a6756c2603e196dd53a21fa98665c56af2ef29
           cd erdos64-block-reduction-work
           bash search/run_block_reduction.sh "$GITHUB_WORKSPACE/erdos64-block-reduction-artifacts"
       - name: Verify relocatable evidence manifest
