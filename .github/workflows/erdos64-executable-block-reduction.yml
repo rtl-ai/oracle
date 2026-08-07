@@ -20,20 +20,23 @@ jobs:
           set -Eeuo pipefail
           mkdir -p erdos64-block-reduction-work
           base64 -d ci/erdos64-block-reduction-src.tar.gz.b64 > erdos64-block-reduction-src.tar.gz
-          echo '3983afe4a21baab692dbfb14369d5f8d60eff7a39496e44a5c514a8760e6ab7f  erdos64-block-reduction-src.tar.gz' | sha256sum -c -
+          echo '28c8ea770844947a7fc2e8733f4ded7ea5aec124e52f9e46964fd3b1ae365607  erdos64-block-reduction-src.tar.gz' | sha256sum -c -
           tar -xzf erdos64-block-reduction-src.tar.gz -C erdos64-block-reduction-work
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nauty
           export GENG_BIN=$(command -v geng || command -v nauty-geng)
           export FORWARD_MAX_N=9
           export REVERSE_MAX_N=8
+          export FORWARD_AUDIT_MAX_N=9
+          export SOURCE_REPOSITORY=rtl-ai/erdos-64-power2-cycle-lab
+          export SOURCE_COMMIT=d1e6939fc4dd8e70322f23226069b0d9650cc843
           cd erdos64-block-reduction-work
           bash search/run_block_reduction.sh "$GITHUB_WORKSPACE/erdos64-block-reduction-artifacts"
       - name: Upload exact execution evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: erdos64-executable-block-reduction
+          name: erdos64-executable-block-reduction-v2
           path: erdos64-block-reduction-artifacts
           if-no-files-found: error
           retention-days: 30
