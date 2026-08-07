@@ -14,14 +14,20 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
       - name: Decode pinned source and execute both reduction directions
         shell: bash
         run: |
           set -Eeuo pipefail
           mkdir -p erdos64-block-reduction-work
-          base64 -d ci/erdos64-block-reduction-src.tar.gz.b64 > erdos64-block-reduction-src.tar.gz
-          echo '28c8ea770844947a7fc2e8733f4ded7ea5aec124e52f9e46964fd3b1ae365607  erdos64-block-reduction-src.tar.gz' | sha256sum -c -
+          git show 491ad90ff46f3539be89503db350eb6909b7f290:ci/erdos64-block-reduction-src.tar.gz.b64 \
+            | base64 -d > erdos64-block-reduction-src.tar.gz
+          echo '3983afe4a21baab692dbfb14369d5f8d60eff7a39496e44a5c514a8760e6ab7f  erdos64-block-reduction-src.tar.gz' | sha256sum -c -
           tar -xzf erdos64-block-reduction-src.tar.gz -C erdos64-block-reduction-work
+          cp ci/erdos64-block-reduction-src.tar.gz.b64 \
+            erdos64-block-reduction-work/search/run_block_reduction.sh
+          echo 'b9bbfb28f3998ed1be28a93a3bb363a88101efe1f6d677f92b00b2d390473a50  erdos64-block-reduction-work/search/run_block_reduction.sh' | sha256sum -c -
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nauty
           export GENG_BIN=$(command -v geng || command -v nauty-geng)
@@ -32,6 +38,12 @@ jobs:
           export SOURCE_COMMIT=d1e6939fc4dd8e70322f23226069b0d9650cc843
           cd erdos64-block-reduction-work
           bash search/run_block_reduction.sh "$GITHUB_WORKSPACE/erdos64-block-reduction-artifacts"
+      - name: Verify relocatable evidence manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd erdos64-block-reduction-artifacts
+          sha256sum -c SHA256SUMS.txt
       - name: Upload exact execution evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
