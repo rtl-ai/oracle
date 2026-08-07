@@ -1,0 +1,76 @@
+name: Erdos64 real geng plus exact verifier smoke
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n17-macos-fast-v4"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ROOT: erdos64-fast-src
+  FAST_SOURCE_COMMIT: "148865b3d1bd7cbacc412840242fa467282e0728"
+
+jobs:
+  execute:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install nauty and run a real canonical geng residue through both verifiers
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -Eeuo pipefail
+          brew list nauty >/dev/null 2>&1 || brew install nauty
+          cd "$SOURCE_ROOT"
+          GENG=$(command -v geng || command -v nauty-geng)
+          chmod +x search/run_rooted_fast_shard.sh
+          mkdir -p results
+          printf '%s\n' "$GENG" > results/geng-path.txt
+          "$GENG" -version > results/geng-version.txt 2>&1
+          SOURCE_REPOSITORY=rtl-ai/erdos-64-power2-cycle-lab \
+          SOURCE_COMMIT="$FAST_SOURCE_COMMIT" \
+          GENG_BIN="$GENG" \
+            bash search/run_rooted_fast_shard.sh 0 65536 results/real-geng-0-of-65536 \
+              > results/workflow.stdout 2> results/workflow.stderr
+          python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path('results/real-geng-0-of-65536')
+          run = dict(
+              line.split('=', 1)
+              for line in (root / 'RUN.txt').read_text().splitlines()
+              if '=' in line
+          )
+          required = [
+              'compile_exit_code', 'bounds_exit_code', 'geng_exit_code',
+              'prefilter_exit_code', 'tee_exit_code', 'checker_exit_code',
+              'combiner_exit_code', 'pipeline_exit_code',
+          ]
+          bad = {key: run.get(key) for key in required if run.get(key) != '0'}
+          summary = json.loads((root / 'combined-summary.json').read_text())
+          audit = {
+              'command': (root / 'COMMAND.txt').read_text().strip(),
+              'run': run,
+              'summary': summary,
+              'nonzero_exit_codes': bad,
+              'all_combiner_checks_true': all(summary['checks'].values()),
+          }
+          pathlib.Path('results/real-geng-audit.json').write_text(
+              json.dumps(audit, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(audit, indent=2, sort_keys=True))
+          if bad or not audit['all_combiner_checks_true']:
+              raise SystemExit('real geng/verifier audit failed')
+          PY
+      - name: Upload execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-real-geng-verifier-0-of-65536
+          path: erdos64-fast-src/results
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
