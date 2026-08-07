@@ -1,0 +1,195 @@
+name: Erdos64 rooted-block exact n17
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n17"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORDER: "17"
+  MODULUS: "256"
+  MIN_EDGES: "25"
+  MAX_EDGES: "38"
+  MAX_DEGREE: "8"
+  SOURCE_ARCHIVE_SHA256: "f45931728c438607e6fce5863e4e6f29bd61167bc00c5a111e80c043fff75a83"
+  SOURCE_FILE_SHA256: "433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78"
+  SOURCE_REPOSITORY: "rtl-ai/erdos-64-power2-cycle-lab"
+  SOURCE_COMMIT: "3fd2f9ba400a6c1c40a935b00f62008f24ce2d89"
+
+jobs:
+  shard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 64
+      matrix:
+        residue: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install nauty and verify pinned checker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update >/dev/null
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nauty >/dev/null
+          mkdir -p source
+          base64 -d ci/erdos64-rooted-n17-src.tar.gz.b64 > source.tar.gz
+          echo "$SOURCE_ARCHIVE_SHA256  source.tar.gz" | sha256sum -c -
+          tar -xzf source.tar.gz -C source
+          echo "$SOURCE_FILE_SHA256  source/rooted_block_exact.py" | sha256sum -c -
+          python3 -m py_compile source/rooted_block_exact.py
+      - name: Run exact canonical residue
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export LC_ALL=C PYTHONHASHSEED=0
+          residue='${{ matrix.residue }}'
+          out="artifacts/shard-${{ env.ORDER }}-${{ env.MODULUS }}-${{ matrix.residue }}"
+          mkdir -p "$out"
+          GENG=$(command -v geng || command -v nauty-geng)
+          command="$GENG -C -q -d2 -f -D${{ env.MAX_DEGREE }} ${{ env.ORDER }} ${{ env.MIN_EDGES }}:${{ env.MAX_EDGES }} ${{ matrix.residue }}/${{ env.MODULUS }}"
+          printf '%s\n' "$command" > "$out/COMMAND.txt"
+          started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          start_epoch=$(date +%s)
+          set +e
+          "$GENG" -C -q -d2 -f -D"${{ env.MAX_DEGREE }}" \
+            "${{ env.ORDER }}" "${{ env.MIN_EDGES }}:${{ env.MAX_EDGES }}" \
+            "${{ matrix.residue }}/${{ env.MODULUS }}" \
+            2>"$out/geng.stderr" \
+            | python3 source/rooted_block_exact.py \
+                --order "${{ env.ORDER }}" --require-c4-free \
+                --candidates "$out/candidates.jsonl" \
+                --summary "$out/summary.json" \
+                >"$out/checker.stdout" 2>"$out/checker.stderr"
+          pipeline=("${PIPESTATUS[@]}")
+          set -e
+          geng_rc=${pipeline[0]}
+          checker_rc=${pipeline[1]}
+          rc=0
+          (( geng_rc == 0 && checker_rc == 0 )) || rc=1
+          finish_epoch=$(date +%s)
+          finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          candidate_count=$(wc -l < "$out/candidates.jsonl" | tr -d ' ')
+          {
+            printf 'source_repository=%s\n' "$SOURCE_REPOSITORY"
+            printf 'source_commit=%s\n' "$SOURCE_COMMIT"
+            printf 'source_file_sha256=%s\n' "$SOURCE_FILE_SHA256"
+            printf 'harness_commit=%s\n' "$GITHUB_SHA"
+            printf 'order=%s\n' "$ORDER"
+            printf 'residue=%s\n' "$residue"
+            printf 'modulus=%s\n' "$MODULUS"
+            printf 'started_utc=%s\n' "$started"
+            printf 'finished_utc=%s\n' "$finished"
+            printf 'elapsed_seconds=%s\n' "$((finish_epoch-start_epoch))"
+            printf 'geng_exit_code=%s\n' "$geng_rc"
+            printf 'checker_exit_code=%s\n' "$checker_rc"
+            printf 'pipeline_exit_code=%s\n' "$rc"
+            printf 'candidate_count=%s\n' "$candidate_count"
+            printf 'candidate_sha256=%s\n' "$(sha256sum "$out/candidates.jsonl" | awk '{print $1}')"
+            printf 'summary_sha256=%s\n' "$(sha256sum "$out/summary.json" | awk '{print $1}')"
+          } > "$out/RUN.txt"
+          sha256sum "$out"/COMMAND.txt "$out"/RUN.txt "$out"/summary.json \
+            "$out"/candidates.jsonl "$out"/geng.stderr \
+            "$out"/checker.stdout "$out"/checker.stderr \
+            > "$out/SHA256SUMS.txt"
+          cat "$out/summary.json"
+          cat "$out/RUN.txt"
+          exit "$rc"
+      - name: Upload shard evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-${{ matrix.residue }}-of-256
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+  aggregate:
+    if: always()
+    needs: shard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: erdos64-rooted-n17-*-of-256
+          path: downloaded
+          merge-multiple: true
+      - name: Audit all residues and aggregate exact counts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p aggregate
+          python3 - <<'PYAGG'
+          import json, pathlib, sys
+          root = pathlib.Path('downloaded')
+          dirs = sorted(p for p in root.glob('shard-17-256-*') if p.is_dir())
+          records = []
+          seen = set()
+          totals = {
+              'input_graphs': 0,
+              'rooted_admissible': 0,
+              'rooted_with_degree2_exception': 0,
+              'ordinary_min_degree3': 0,
+              'with_power_of_two_cycle': 0,
+              'power_free_candidates': 0,
+          }
+          errors = []
+          for d in dirs:
+              run = {}
+              for line in (d / 'RUN.txt').read_text().splitlines():
+                  if '=' in line:
+                      k, v = line.split('=', 1); run[k] = v
+              residue = int(run.get('residue', '-1'))
+              if residue in seen: errors.append(f'duplicate residue {residue}')
+              seen.add(residue)
+              if run.get('modulus') != '256': errors.append(f'bad modulus {residue}')
+              if run.get('source_commit') != '3fd2f9ba400a6c1c40a935b00f62008f24ce2d89': errors.append(f'bad source {residue}')
+              if run.get('source_file_sha256') != '433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78': errors.append(f'bad source hash {residue}')
+              for key in ('geng_exit_code','checker_exit_code','pipeline_exit_code'):
+                  if run.get(key) != '0': errors.append(f'{key}={run.get(key)} residue {residue}')
+              summary = json.loads((d / 'summary.json').read_text())
+              if summary.get('order') != 17: errors.append(f'bad order {residue}')
+              if not summary.get('dual_parser_agreement') or not summary.get('fail_closed'):
+                  errors.append(f'verifier flags false {residue}')
+              for key in totals: totals[key] += int(summary[key])
+              candidate_lines = sum(1 for _ in (d / 'candidates.jsonl').open())
+              if candidate_lines != int(run.get('candidate_count','-1')):
+                  errors.append(f'candidate count mismatch {residue}')
+              records.append({'residue': residue, 'run': run, 'summary': summary})
+          missing = sorted(set(range(256)) - seen)
+          if missing: errors.append(f'missing residues: {missing}')
+          result = {
+              'schema': 'erdos64-rooted-n17-exact-v1',
+              'order': 17,
+              'modulus': 256,
+              'completed_residues': len(seen),
+              'missing_residues': missing,
+              'source_repository': 'rtl-ai/erdos-64-power2-cycle-lab',
+              'source_commit': '3fd2f9ba400a6c1c40a935b00f62008f24ce2d89',
+              'source_file_sha256': '433e9d4879fa1f448fe568efeb02d296928596875324ebea66adc10935f59f78',
+              'totals': totals,
+              'counterexample_found': totals['power_free_candidates'] > 0,
+              'errors': errors,
+          }
+          pathlib.Path('aggregate/aggregate.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('aggregate/per_shard.json').write_text(json.dumps(records, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('aggregate/missing_residues.txt').write_text('\n'.join(map(str, missing)) + ('\n' if missing else ''))
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if errors: sys.exit(1)
+          PYAGG
+          (cd aggregate && sha256sum aggregate.json per_shard.json missing_residues.txt > SHA256SUMS.txt)
+      - name: Upload aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-rooted-n17-aggregate
+          path: aggregate
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
