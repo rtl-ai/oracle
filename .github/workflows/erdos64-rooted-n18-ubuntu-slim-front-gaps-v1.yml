@@ -1,0 +1,87 @@
+name: Erdos64 rooted n18 ubuntu-slim front gaps
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n18-macos-256-v1"]
+    paths:
+      - "erdos64-fast-src/**"
+      - ".github/workflows/erdos64-rooted-n18-ubuntu-slim-front-gaps-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: erdos64-rooted-n18-ubuntu-slim-front-gaps-v1
+  cancel-in-progress: true
+
+env:
+  SOURCE_ROOT: erdos64-fast-src
+  ORDER: "18"
+  MIN_EDGES: "27"
+  MAX_EDGES: "41"
+  MAX_DEGREE: "9"
+  MODULUS: "4096"
+
+jobs:
+  search:
+    name: exact front gap ${{ matrix.base }}-${{ matrix.last }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - base: 20
+            last: 35
+          - base: 164
+            last: 179
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install nauty and execute exact residue group
+        shell: bash
+        env:
+          BASE: ${{ matrix.base }}
+          LAST: ${{ matrix.last }}
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nauty
+          cd "$SOURCE_ROOT"
+          GENG=$(command -v geng || command -v nauty-geng)
+          test -x "$GENG"
+          chmod +x search/run_rooted_fast_shard.sh
+          SHARD_DIR="results/front-gap-$BASE-$LAST"
+          mkdir -p "$SHARD_DIR"
+          printf '%s\n' "$GENG" > "$SHARD_DIR/geng-path.txt"
+          "$GENG" -version > "$SHARD_DIR/geng-version.txt" 2>&1 || true
+          printf 'base_residue=%s\nlast_residue=%s\n' "$BASE" "$LAST" > "$SHARD_DIR/GROUP.txt"
+          for ((residue=BASE; residue<=LAST; residue++)); do
+            OUT="$SHARD_DIR/residue-$(printf '%04d' "$residue")-of-$MODULUS"
+            mkdir -p "$OUT"
+            set +e
+            SOURCE_REPOSITORY=rtl-ai/oracle SOURCE_COMMIT="$GITHUB_SHA" \
+            GENG_BIN="$GENG" ORDER="$ORDER" MIN_EDGES="$MIN_EDGES" \
+            MAX_EDGES="$MAX_EDGES" MAX_DEGREE="$MAX_DEGREE" \
+              bash search/run_rooted_fast_shard.sh "$residue" "$MODULUS" "$OUT" \
+                > "$OUT/workflow.stdout" 2> "$OUT/workflow.stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "$OUT/outer-exit-code.txt"
+          done
+          python3 search/audit_rooted_group.py \
+            "$SHARD_DIR" "$BASE" "$LAST" "$MODULUS" "$GITHUB_SHA" \
+            --order "$ORDER" --min-edges "$MIN_EDGES" \
+            --max-edges "$MAX_EDGES" --max-degree "$MAX_DEGREE"
+
+      - name: Upload exact evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-n18-front-gap-${{ matrix.base }}-${{ matrix.last }}
+          path: erdos64-fast-src/results
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
