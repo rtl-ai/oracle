@@ -1,2 +1,3 @@
 import Erdos64FiniteCertificate.FiniteCertificateBridge
 import Erdos64FiniteCertificate.CycleCodeBounds
+import Erdos64FiniteCertificate.CycleCodeWalkEquiv
