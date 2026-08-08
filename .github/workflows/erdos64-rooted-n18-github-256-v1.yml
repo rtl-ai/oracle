@@ -1,0 +1,407 @@
+name: Erdos64 rooted n18 exact residues 20-275
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n18-github-256-v1"]
+    paths:
+      - "erdos64-fast-src/**"
+      - ".github/workflows/erdos64-rooted-n18-github-256-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ROOT: erdos64-fast-src
+  ORDER: "18"
+  MIN_EDGES: "27"
+  MAX_EDGES: "41"
+  MAX_DEGREE: "9"
+  MODULUS: "4096"
+  START_RESIDUE: "20"
+  RESIDUES_PER_JOB: "16"
+
+jobs:
+  search:
+    name: exact shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install nauty and execute exact residue group
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nauty
+
+          cd "$SOURCE_ROOT"
+          GENG=$(command -v geng || command -v nauty-geng)
+          test -x "$GENG"
+          chmod +x search/run_rooted_fast_shard.sh
+
+          SHARD_PAD=$(printf '%02d' "$SHARD")
+          SHARD_DIR="results/shard-$SHARD_PAD"
+          mkdir -p "$SHARD_DIR"
+          printf '%s\n' "$GENG" > "$SHARD_DIR/geng-path.txt"
+          "$GENG" -help > "$SHARD_DIR/geng-help.txt" 2>&1 || true
+          "$GENG" -version > "$SHARD_DIR/geng-version.txt" 2>&1 || true
+
+          BASE=$((START_RESIDUE + SHARD * RESIDUES_PER_JOB))
+          LAST=$((BASE + RESIDUES_PER_JOB - 1))
+          printf 'base_residue=%s\nlast_residue=%s\n' "$BASE" "$LAST" \
+            > "$SHARD_DIR/GROUP.txt"
+
+          for ((residue=BASE; residue<=LAST; residue++)); do
+            RESIDUE_PAD=$(printf '%04d' "$residue")
+            OUT="$SHARD_DIR/residue-$RESIDUE_PAD-of-$MODULUS"
+            mkdir -p "$OUT"
+            set +e
+            SOURCE_REPOSITORY=rtl-ai/oracle \
+            SOURCE_COMMIT="$GITHUB_SHA" \
+            GENG_BIN="$GENG" \
+            ORDER="$ORDER" \
+            MIN_EDGES="$MIN_EDGES" \
+            MAX_EDGES="$MAX_EDGES" \
+            MAX_DEGREE="$MAX_DEGREE" \
+              bash search/run_rooted_fast_shard.sh \
+                "$residue" "$MODULUS" "$OUT" \
+                > "$OUT/workflow.stdout" 2> "$OUT/workflow.stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "$OUT/outer-exit-code.txt"
+          done
+
+          python3 - "$SHARD_DIR" "$BASE" "$LAST" "$MODULUS" "$GITHUB_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          from collections import Counter
+
+          root = pathlib.Path(sys.argv[1])
+          base = int(sys.argv[2])
+          last = int(sys.argv[3])
+          modulus = int(sys.argv[4])
+          commit = sys.argv[5]
+          expected = list(range(base, last + 1))
+
+          count_keys = [
+              "generated_graphs",
+              "rejected_min_degree_below_2",
+              "rejected_multiple_degree_2_vertices",
+              "rooted_admissible",
+              "ordinary_min_degree3",
+              "rooted_with_degree2_exception",
+              "validated_c8_prefilter_hits",
+              "exact_fallback_inputs",
+              "exact_fallback_power_hits",
+              "with_power_of_two_cycle",
+              "power_free_candidates",
+          ]
+          totals = Counter()
+          first_hits = Counter()
+          errors = []
+          residues = []
+          elapsed = 0
+          source_hashes = {}
+
+          def parse_run(path: pathlib.Path) -> dict[str, str]:
+              result = {}
+              for line in path.read_text().splitlines():
+                  if "=" in line:
+                      key, value = line.split("=", 1)
+                      result[key] = value
+              return result
+
+          def sha256(path: pathlib.Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for block in iter(lambda: stream.read(1 << 20), b""):
+                      digest.update(block)
+              return digest.hexdigest()
+
+          for residue in expected:
+              directory = root / f"residue-{residue:04d}-of-{modulus}"
+              try:
+                  if not directory.is_dir():
+                      raise ValueError("missing residue directory")
+                  outer = int((directory / "outer-exit-code.txt").read_text().strip())
+                  if outer != 0:
+                      raise ValueError(f"outer exit code {outer}")
+                  run = parse_run(directory / "RUN.txt")
+                  required_zero = [
+                      "compile_exit_code", "bounds_exit_code", "geng_exit_code",
+                      "prefilter_exit_code", "tee_exit_code", "checker_exit_code",
+                      "combiner_exit_code", "pipeline_exit_code",
+                  ]
+                  bad = {key: run.get(key) for key in required_zero if run.get(key) != "0"}
+                  if bad:
+                      raise ValueError(f"nonzero stage exit codes: {bad}")
+                  expected_fields = {
+                      "source_commit": commit,
+                      "order": "18",
+                      "min_edges": "27",
+                      "max_edges": "41",
+                      "max_degree": "9",
+                      "residue": str(residue),
+                      "modulus": str(modulus),
+                      "survivor_count": "0",
+                      "candidate_count": "0",
+                  }
+                  wrong = {
+                      key: (run.get(key), value)
+                      for key, value in expected_fields.items()
+                      if run.get(key) != value
+                  }
+                  if wrong:
+                      raise ValueError(f"RUN field mismatch: {wrong}")
+
+                  manifest = directory / "SHA256SUMS.txt"
+                  listed = 0
+                  for line in manifest.read_text().splitlines():
+                      digest, name = line.split("  ", 1)
+                      target = directory / name
+                      if not target.is_file() or sha256(target) != digest:
+                          raise ValueError(f"manifest mismatch for {name}")
+                      listed += 1
+                  if listed == 0:
+                      raise ValueError("empty per-residue manifest")
+
+                  summary = json.loads((directory / "combined-summary.json").read_text())
+                  if summary.get("schema") != "erdos64-rooted-fast-shard-v1":
+                      raise ValueError("unexpected combined-summary schema")
+                  if summary.get("order") != 18:
+                      raise ValueError("wrong order in combined summary")
+                  if not all(summary.get("checks", {}).values()):
+                      raise ValueError("a combined-summary consistency check is false")
+                  counts = summary.get("counts", {})
+                  for key in count_keys:
+                      value = counts.get(key)
+                      if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                          raise ValueError(f"invalid count {key}={value!r}")
+                      totals[key] += value
+                  if counts["power_free_candidates"] != 0:
+                      raise ValueError("counterexample candidate emitted")
+                  if counts["exact_fallback_inputs"] != 0:
+                      raise ValueError("unexpected exact fallback input")
+                  if counts["rooted_admissible"] != counts["with_power_of_two_cycle"]:
+                      raise ValueError("rooted cycle partition mismatch")
+                  for key, value in summary.get("first_hit_histogram", {}).items():
+                      first_hits[str(key)] += int(value)
+                  if set(summary.get("first_hit_histogram", {})) - {"8"}:
+                      raise ValueError("a first-hit length other than 8 appeared")
+
+                  for key in [
+                      "rooted_block_exact_sha256",
+                      "rooted_prefilter_source_sha256",
+                      "rooted_bounds_sha256",
+                      "combiner_sha256",
+                  ]:
+                      source_hashes.setdefault(key, set()).add(run[key])
+                  elapsed += int(run["elapsed_seconds"])
+                  residues.append(residue)
+              except Exception as exc:
+                  errors.append({"residue": residue, "error": str(exc)})
+
+          checks = {
+              "all_expected_residues": residues == expected,
+              "no_errors": not errors,
+              "no_candidates": totals["power_free_candidates"] == 0,
+              "no_fallback_inputs": totals["exact_fallback_inputs"] == 0,
+              "all_rooted_have_validated_c8": (
+                  totals["rooted_admissible"] == totals["validated_c8_prefilter_hits"]
+              ),
+              "rooted_degree_partition": (
+                  totals["rooted_admissible"]
+                  == totals["ordinary_min_degree3"]
+                  + totals["rooted_with_degree2_exception"]
+              ),
+              "source_hashes_constant": all(len(values) == 1 for values in source_hashes.values()),
+          }
+          result = {
+              "schema": "erdos64-rooted-n18-github-group-v1",
+              "workflow_commit": commit,
+              "order": 18,
+              "modulus": modulus,
+              "base_residue": base,
+              "last_residue": last,
+              "residues": residues,
+              "counts": dict(totals),
+              "first_hit_histogram": dict(sorted(first_hits.items())),
+              "sum_elapsed_seconds": elapsed,
+              "source_hashes": {
+                  key: sorted(values) for key, values in source_hashes.items()
+              },
+              "checks": checks,
+              "errors": errors,
+              "counterexample_found": totals["power_free_candidates"] > 0,
+          }
+          (root / "job-summary.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n"
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if not all(checks.values()):
+              raise SystemExit(1)
+          PY
+
+          python3 - "$SHARD_DIR" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          lines = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or path.name == "JOB_SHA256SUMS.txt":
+                  continue
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {path.relative_to(root)}")
+          (root / "JOB_SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload residue-group evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-n18-shard-${{ matrix.shard }}
+          path: erdos64-fast-src/results
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
+
+  aggregate:
+    name: aggregate and cross-audit 256 residues
+    if: always()
+    needs: search
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download all residue-group evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: erdos64-n18-shard-*
+          path: downloaded
+          merge-multiple: true
+
+      - name: Independently aggregate all groups
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p aggregate
+          python3 - downloaded aggregate/aggregate-summary.json "$GITHUB_SHA" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          from collections import Counter
+
+          root = pathlib.Path(sys.argv[1])
+          output = pathlib.Path(sys.argv[2])
+          commit = sys.argv[3]
+          summaries = sorted(root.rglob("job-summary.json"))
+          expected_residues = list(range(20, 276))
+          counts = Counter()
+          first_hits = Counter()
+          residues = []
+          elapsed = 0
+          errors = []
+          source_hashes = {}
+
+          for path in summaries:
+              try:
+                  data = json.loads(path.read_text())
+                  if data.get("schema") != "erdos64-rooted-n18-github-group-v1":
+                      raise ValueError("unexpected group schema")
+                  if data.get("workflow_commit") != commit:
+                      raise ValueError("workflow commit mismatch")
+                  if not all(data.get("checks", {}).values()):
+                      raise ValueError("group check is false")
+                  if data.get("errors"):
+                      raise ValueError("group contains errors")
+                  residues.extend(data["residues"])
+                  counts.update(data["counts"])
+                  first_hits.update(data["first_hit_histogram"])
+                  elapsed += int(data["sum_elapsed_seconds"])
+                  for key, values in data.get("source_hashes", {}).items():
+                      source_hashes.setdefault(key, set()).update(values)
+              except Exception as exc:
+                  errors.append({"path": str(path), "error": str(exc)})
+
+          residues_sorted = sorted(residues)
+          checks = {
+              "all_16_group_summaries": len(summaries) == 16,
+              "all_256_residues_exactly_once": residues_sorted == expected_residues,
+              "no_duplicate_residues": len(residues) == len(set(residues)),
+              "no_group_errors": not errors,
+              "no_candidates": counts["power_free_candidates"] == 0,
+              "no_fallback_inputs": counts["exact_fallback_inputs"] == 0,
+              "all_rooted_have_validated_c8": (
+                  counts["rooted_admissible"] == counts["validated_c8_prefilter_hits"]
+              ),
+              "all_first_hits_are_8": set(first_hits) <= {"8"},
+              "first_hit_partition": sum(first_hits.values()) == counts["with_power_of_two_cycle"],
+              "rooted_cycle_partition": (
+                  counts["rooted_admissible"]
+                  == counts["with_power_of_two_cycle"]
+                  + counts["power_free_candidates"]
+              ),
+              "rooted_degree_partition": (
+                  counts["rooted_admissible"]
+                  == counts["ordinary_min_degree3"]
+                  + counts["rooted_with_degree2_exception"]
+              ),
+              "source_hashes_constant": all(len(values) == 1 for values in source_hashes.values()),
+          }
+          result = {
+              "schema": "erdos64-rooted-n18-github-256-result-v1",
+              "workflow_commit": commit,
+              "order": 18,
+              "modulus": 4096,
+              "residue_range": "20-275",
+              "residues_verified": len(residues_sorted),
+              "residues": residues_sorted,
+              "counts": dict(counts),
+              "first_hit_histogram": dict(sorted(first_hits.items())),
+              "sum_elapsed_seconds": elapsed,
+              "source_hashes": {
+                  key: sorted(values) for key, values in source_hashes.items()
+              },
+              "checks": checks,
+              "errors": errors,
+              "counterexample_found": counts["power_free_candidates"] > 0,
+          }
+          output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if not all(checks.values()):
+              raise SystemExit(1)
+          PY
+
+          {
+            printf 'repository_commit=%s\n' "$GITHUB_SHA"
+            printf 'runner_os=%s\n' "$RUNNER_OS"
+            printf 'runner_arch=%s\n' "$RUNNER_ARCH"
+            printf 'aggregate_exit_code=0\n'
+          } > aggregate/RUN.txt
+          sha256sum aggregate/aggregate-summary.json aggregate/RUN.txt \
+            > aggregate/SHA256SUMS.txt
+
+      - name: Upload aggregate result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-n18-residues-20-275-aggregate
+          path: aggregate
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
