@@ -50,9 +50,15 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
+wrapper_owned = {
+    "SHA256SUMS.txt",
+    "workflow.stdout",
+    "workflow.stderr",
+    "outer-exit-code.txt",
+}
 lines = []
 for path in sorted(root.iterdir(), key=lambda item: item.name):
-    if not path.is_file() or path.name == "SHA256SUMS.txt":
+    if not path.is_file() or path.name in wrapper_owned:
         continue
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     lines.append(f"{digest}  {path.name}")
