@@ -1,0 +1,102 @@
+name: Erdos64 rooted n18 ubuntu-slim gap 372-467
+
+on:
+  push:
+    branches: ["ci/erdos64-rooted-n18-macos-256-v1"]
+    paths:
+      - "erdos64-fast-src/**"
+      - ".github/workflows/erdos64-rooted-n18-ubuntu-slim-gap-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: erdos64-rooted-n18-ubuntu-slim-gap-v1
+  cancel-in-progress: true
+
+env:
+  SOURCE_ROOT: erdos64-fast-src
+  ORDER: "18"
+  MIN_EDGES: "27"
+  MAX_EDGES: "41"
+  MAX_DEGREE: "9"
+  MODULUS: "4096"
+  START_RESIDUE: "372"
+  RESIDUES_PER_JOB: "16"
+
+jobs:
+  search:
+    name: exact slim gap shard ${{ matrix.shard }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install nauty and execute exact residue group
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nauty
+
+          cd "$SOURCE_ROOT"
+          GENG=$(command -v geng || command -v nauty-geng)
+          test -x "$GENG"
+          chmod +x search/run_rooted_fast_shard.sh
+
+          SHARD_DIR="results/slim-gap-$SHARD"
+          mkdir -p "$SHARD_DIR"
+          printf '%s\n' "$GENG" > "$SHARD_DIR/geng-path.txt"
+          "$GENG" -version > "$SHARD_DIR/geng-version.txt" 2>&1 || true
+          cc --version > "$SHARD_DIR/cc-version.txt" 2>&1
+          python3 --version > "$SHARD_DIR/python-version.txt" 2>&1
+
+          BASE=$((START_RESIDUE + SHARD * RESIDUES_PER_JOB))
+          LAST=$((BASE + RESIDUES_PER_JOB - 1))
+          printf 'base_residue=%s\nlast_residue=%s\n' "$BASE" "$LAST" \
+            > "$SHARD_DIR/GROUP.txt"
+
+          for ((residue=BASE; residue<=LAST; residue++)); do
+            RESIDUE_PAD=$(printf '%04d' "$residue")
+            OUT="$SHARD_DIR/residue-$RESIDUE_PAD-of-$MODULUS"
+            mkdir -p "$OUT"
+            set +e
+            SOURCE_REPOSITORY=rtl-ai/oracle \
+            SOURCE_COMMIT="$GITHUB_SHA" \
+            GENG_BIN="$GENG" \
+            ORDER="$ORDER" \
+            MIN_EDGES="$MIN_EDGES" \
+            MAX_EDGES="$MAX_EDGES" \
+            MAX_DEGREE="$MAX_DEGREE" \
+              bash search/run_rooted_fast_shard.sh \
+                "$residue" "$MODULUS" "$OUT" \
+                > "$OUT/workflow.stdout" 2> "$OUT/workflow.stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "$OUT/outer-exit-code.txt"
+          done
+
+          python3 search/audit_rooted_group.py \
+            "$SHARD_DIR" "$BASE" "$LAST" "$MODULUS" "$GITHUB_SHA" \
+            --order "$ORDER" \
+            --min-edges "$MIN_EDGES" \
+            --max-edges "$MAX_EDGES" \
+            --max-degree "$MAX_DEGREE"
+
+      - name: Upload exact evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: erdos64-n18-slim-gap-${{ matrix.shard }}
+          path: erdos64-fast-src/results
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
