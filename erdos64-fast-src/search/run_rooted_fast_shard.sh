@@ -13,15 +13,20 @@ CC=${CC:-cc}
 GENG_BIN=${GENG_BIN:-}
 SOURCE_REPOSITORY=${SOURCE_REPOSITORY:-rtl-ai/erdos-64-power2-cycle-lab}
 SOURCE_COMMIT=${SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo UNAVAILABLE)}
-ORDER=17
-MIN_EDGES=25
-MAX_EDGES=38
-MAX_DEGREE=8
+ORDER=${ORDER:-17}
+MIN_EDGES=${MIN_EDGES:-25}
+MAX_EDGES=${MAX_EDGES:-38}
+MAX_DEGREE=${MAX_DEGREE:-8}
 
 usage() {
   echo "Usage: $0 RESIDUE MODULUS OUTPUT_DIR" >&2
   exit 64
 }
+
+for value in "$ORDER" "$MIN_EDGES" "$MAX_EDGES" "$MAX_DEGREE"; do
+  [[ $value =~ ^[0-9]+$ ]] || usage
+done
+(( ORDER >= 3 && MIN_EDGES <= MAX_EDGES && MAX_DEGREE < ORDER )) || usage
 
 sha256_file() {
   "$PYTHON" - "$1" <<'PY'
@@ -167,6 +172,9 @@ fi
   printf 'rooted_bounds_sha256=%s\n' "$(sha256_file "$BOUNDS")"
   printf 'combiner_sha256=%s\n' "$(sha256_file "$COMBINER")"
   printf 'order=%s\n' "$ORDER"
+  printf 'min_edges=%s\n' "$MIN_EDGES"
+  printf 'max_edges=%s\n' "$MAX_EDGES"
+  printf 'max_degree=%s\n' "$MAX_DEGREE"
   printf 'residue=%s\n' "$RESIDUE"
   printf 'modulus=%s\n' "$MODULUS"
   printf 'started_utc=%s\n' "$STARTED"
