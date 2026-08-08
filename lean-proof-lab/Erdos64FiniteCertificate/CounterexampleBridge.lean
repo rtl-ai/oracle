@@ -19,7 +19,7 @@ universe u
 
 /-- The finite Erdős–Gyárfás power-of-two cycle statement for vertex types in
 one fixed universe. -/
-def Erdos64Statement.{u} : Prop :=
+def Erdos64Statement : Prop :=
   ∀ (V : Type u) (G : SimpleGraph V) [Fintype V] [DecidableRel G.Adj],
     G.minDegree ≥ 3 →
       ∃ (k : ℕ) (v : V) (c : G.Walk v v),
