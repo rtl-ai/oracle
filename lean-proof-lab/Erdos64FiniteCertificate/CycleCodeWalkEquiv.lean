@@ -5,7 +5,7 @@ import Mathlib.Data.List.OfFn
 # Exact equivalence between finite cycle codes and walk cycles
 
 This module constructs Mathlib's dependent `SimpleGraph.Walk` objects from
-explicit finite vertex tuples.  It proves exact length and support formulas,
+explicit finite vertex tuples. It proves exact length and support formulas,
 shows injective linked tuples form paths, closes such paths into simple cycles,
 and establishes the reverse implication missing from the original finite-search
 certificate bridge.
@@ -141,8 +141,8 @@ theorem hasCycleCode_iff_exists_isCycle
   · rintro ⟨v, c, hc, hlen⟩
     exact hasCycleCode_of_isCycle hc hlen
 
-/-- Consequently, avoidance of all admissible power-of-two finite codes is
-exactly the negation of the walk-cycle witness used in Erdős Problem 64. -/
+/-- Avoidance of all admissible power-of-two finite codes is exactly the
+negation of the walk-cycle witness used in Erdős Problem 64. -/
 theorem avoidsAllPowerCycleCodes_iff_not_hasPowerCycleWalk
     {V : Type*} (G : SimpleGraph V) :
     AvoidsAllPowerCycleCodes G ↔ ¬ HasPowerCycleWalk G := by
@@ -154,6 +154,15 @@ theorem avoidsAllPowerCycleCodes_iff_not_hasPowerCycleWalk
     rcases exists_isCycle_of_hasCycleCode hcode with ⟨v, c, hc, hlen⟩
     exact hno ⟨k, v, c, hk, hc, hlen⟩
 
+/-- The cardinality-bounded condition used by an exhaustive finite checker is
+itself exactly equivalent to absence of a power-of-two walk cycle. No separate
+unbounded certificate assumption remains. -/
+theorem avoidsPowerCycleCodesUpToCard_iff_not_hasPowerCycleWalk
+    {V : Type*} [Fintype V] (G : SimpleGraph V) :
+    AvoidsPowerCycleCodesUpToCard G ↔ ¬ HasPowerCycleWalk G :=
+  (avoidsPowerCycleCodesUpToCard_iff_avoidsAllPowerCycleCodes G).trans
+    (avoidsAllPowerCycleCodes_iff_not_hasPowerCycleWalk G)
+
 #print axioms Erdos64FiniteCertificate.linearWalk_length
 #print axioms Erdos64FiniteCertificate.linearWalk_support
 #print axioms Erdos64FiniteCertificate.linearWalk_isPath
@@ -164,5 +173,6 @@ theorem avoidsAllPowerCycleCodes_iff_not_hasPowerCycleWalk
 #print axioms Erdos64FiniteCertificate.exists_isCycle_of_hasCycleCode
 #print axioms Erdos64FiniteCertificate.hasCycleCode_iff_exists_isCycle
 #print axioms Erdos64FiniteCertificate.avoidsAllPowerCycleCodes_iff_not_hasPowerCycleWalk
+#print axioms Erdos64FiniteCertificate.avoidsPowerCycleCodesUpToCard_iff_not_hasPowerCycleWalk
 
 end Erdos64FiniteCertificate
