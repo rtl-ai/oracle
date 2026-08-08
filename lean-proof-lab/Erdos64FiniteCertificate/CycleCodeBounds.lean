@@ -85,14 +85,18 @@ theorem hasCycleCode_iff_of_equiv
     HasCycleCode G L ↔ HasCycleCode H L := by
   constructor
   · intro hcode
-    exact hasCycleCode_of_injective_relabel
-      (fun u => e u) e.injective
-      (fun {u v} huv => (hAdj u v).1 huv) hcode
+    refine hasCycleCode_of_injective_relabel
+      (V := V) (W := W) (G := G) (H := H) (L := L)
+      e e.injective ?_ hcode
+    intro u v huv
+    exact (hAdj u v).1 huv
   · intro hcode
-    exact hasCycleCode_of_injective_relabel
-      (fun w => e.symm w) e.symm.injective
-      (fun {x y} hxy =>
-        (hAdj (e.symm x) (e.symm y)).2 (by simpa using hxy)) hcode
+    refine hasCycleCode_of_injective_relabel
+      (V := W) (W := V) (G := H) (H := G) (L := L)
+      e.symm e.symm.injective ?_ hcode
+    intro x y hxy
+    apply (hAdj (e.symm x) (e.symm y)).2
+    simpa using hxy
 
 /-- Power-of-two-code avoidance is likewise invariant under graph-isomorphism
 data. -/
